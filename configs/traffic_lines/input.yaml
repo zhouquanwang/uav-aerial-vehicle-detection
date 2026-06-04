@@ -1,0 +1,31 @@
+video_name: input.MP4
+video_path: F:\cursor\uav-aerial-vehicle-detection\data\input.MP4
+entries:
+  出城方向:
+    lines:
+    - line_id: line_5bdd5d64
+      entry_name: 出城方向
+      direction: 直行
+      x1: 1835
+      y1: 1227
+      x2: 2161
+      y2: 1242
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+  进出方向:
+    lines:
+    - line_id: line_39b33480
+      entry_name: 进出方向
+      direction: 直行
+      x1: 1844
+      y1: 1109
+      x2: 1534
+      y2: 1098
+      color:
+      - 52
+      - 152
+      - 219
+      is_drawn: true

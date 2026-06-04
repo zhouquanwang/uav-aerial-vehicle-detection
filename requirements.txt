@@ -1,0 +1,13 @@
+# Inference stack (aligned with yolo_drone_env_linux.yml pip section).
+# Install PyTorch first — see requirements-gpu.txt or requirements-cpu.txt.
+
+numpy==1.26.4
+opencv-python==4.10.0.84
+pandas==2.2.3
+pyyaml>=6.0
+tqdm>=4.66.0
+pybboxes==0.1.6
+sahi==0.11.22
+supervision==0.25.1
+ultralytics==8.3.92
+ultralytics-thop==2.0.14

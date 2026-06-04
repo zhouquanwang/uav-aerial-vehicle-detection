@@ -1,0 +1,31 @@
+video_name: 蜀西路-右进左出.mp4
+video_path: H:\2026年项目文件夹\09-12号线规划统筹\蜀西路-右进左出.mp4
+entries:
+  出城方向:
+    lines:
+    - line_id: line_3909470c
+      entry_name: 出城方向
+      direction: 直行
+      x1: 479
+      y1: 316
+      x2: 37
+      y2: 313
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+  进城方向:
+    lines:
+    - line_id: line_537527f7
+      entry_name: 进城方向
+      direction: 直行
+      x1: 570
+      y1: 317
+      x2: 940
+      y2: 315
+      color:
+      - 52
+      - 152
+      - 219
+      is_drawn: true

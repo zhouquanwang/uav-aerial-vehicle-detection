@@ -1,0 +1,31 @@
+video_name: 金牛大道-出城.mp4
+video_path: F:\cursor\uav-aerial-vehicle-detection\data\金牛大道-出城.mp4
+entries:
+  进口道1:
+    lines:
+    - line_id: line_8b6008bf
+      entry_name: 进口道1
+      direction: 直行
+      x1: 535
+      y1: 283
+      x2: 163
+      y2: 286
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+  进口道2:
+    lines:
+    - line_id: line_9f3a31d7
+      entry_name: 进口道2
+      direction: 直行
+      x1: 545
+      y1: 288
+      x2: 879
+      y2: 288
+      color:
+      - 52
+      - 152
+      - 219
+      is_drawn: true

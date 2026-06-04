@@ -1,0 +1,59 @@
+video_name: 西芯大道左出右进.mp4
+video_path: H:\2026年项目文件夹\09-12号线规划统筹\西芯大道左出右进.mp4
+entries:
+  进城方向-主道:
+    lines:
+    - line_id: line_d4a93fd5
+      entry_name: 进城方向-主道
+      direction: 直行
+      x1: 498
+      y1: 278
+      x2: 651
+      y2: 285
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+  进城方向-辅道:
+    lines:
+    - line_id: line_4d51776a
+      entry_name: 进城方向-辅道
+      direction: 直行
+      x1: 696
+      y1: 302
+      x2: 811
+      y2: 303
+      color:
+      - 52
+      - 152
+      - 219
+      is_drawn: true
+  出城方向主道:
+    lines:
+    - line_id: line_acf46bde
+      entry_name: 出城方向主道
+      direction: 直行
+      x1: 477
+      y1: 298
+      x2: 292
+      y2: 296
+      color:
+      - 46
+      - 204
+      - 113
+      is_drawn: true
+  出城方向-辅道:
+    lines:
+    - line_id: line_8d93dc4d
+      entry_name: 出城方向-辅道
+      direction: 直行
+      x1: 248
+      y1: 309
+      x2: 14
+      y2: 309
+      color:
+      - 155
+      - 89
+      - 182
+      is_drawn: true

@@ -1,0 +1,7 @@
+# CPU-only install (PowerShell, project root):
+#
+#   python -m venv .venv
+#   .\.venv\Scripts\Activate.ps1
+#   python -m pip install --upgrade pip
+#   python -m pip install torch==2.6.0 torchvision==0.21.0
+#   python -m pip install -r requirements.txt

@@ -1,0 +1,10 @@
+# Windows / NVIDIA GPU — recommended one-shot setup:
+#
+#   .\scripts\setup_venv.ps1
+#
+# If download.pytorch.org is blocked, setup falls back to CPU torch from Tsinghua mirror.
+# Later, when the network allows:
+#
+#   .\scripts\install_gpu_torch.ps1
+#
+# Verify: .\.venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available())"

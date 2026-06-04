@@ -1,0 +1,36 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+build/
+dist/
+.DS_Store
+
+# 数据与产物（保留 .gitkeep）
+data/*
+!data/.gitkeep
+models/*
+!models/.gitkeep
+outputs/*
+!outputs/.gitkeep
+
+# 常见大文件
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.rar
+*.whl
+*.pt
+*.pth
+*.onnx
+*.zip
+*.tar
+*.tar.gz
+*.bak
+
+# 论文/文档
+论文/*.pdf
+docs/*.pdf

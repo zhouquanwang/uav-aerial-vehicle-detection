@@ -1,0 +1,31 @@
+video_name: 杉板桥-右出左进.mp4
+video_path: H:\2026年项目文件夹\09-12号线规划统筹\杉板桥-右出左进.mp4
+entries:
+  进城:
+    lines:
+    - line_id: line_8e6d5e6d
+      entry_name: 进城
+      direction: 直行
+      x1: 635
+      y1: 285
+      x2: 226
+      y2: 278
+      color:
+      - 52
+      - 152
+      - 219
+      is_drawn: true
+  出城:
+    lines:
+    - line_id: line_fa41e0b0
+      entry_name: 出城
+      direction: 直行
+      x1: 641
+      y1: 274
+      x2: 821
+      y2: 233
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true

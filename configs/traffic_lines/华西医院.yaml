@@ -1,0 +1,45 @@
+video_name: 华西医院.MP4
+video_path: F:\cursor\uav-aerial-vehicle-detection\data\华西医院.MP4
+entries:
+  出城方向:
+    lines:
+    - line_id: line_d738a2ed
+      entry_name: 出城方向
+      direction: 直行
+      x1: 2278
+      y1: 1089
+      x2: 2592
+      y2: 1104
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+  进城方向:
+    lines:
+    - line_id: line_56c9e637
+      entry_name: 进城方向
+      direction: 直行
+      x1: 2069
+      y1: 998
+      x2: 2316
+      y2: 1006
+      color:
+      - 52
+      - 152
+      - 219
+      is_drawn: true
+  人行横道:
+    lines:
+    - line_id: line_75dbf97e
+      entry_name: 人行横道
+      direction: 直行
+      x1: 2304
+      y1: 1032
+      x2: 2297
+      y2: 1085
+      color:
+      - 46
+      - 204
+      - 113
+      is_drawn: true
