@@ -2,19 +2,13 @@ confidence_threshold: 0.2
 detect_skip_interval: 2
 device: auto
 input_video: data/input.mp4
-label_font_size: 18
 max_frames: null
+model_path: models/WALDO30_yolov8m_640x640 (1).pt
 model_select: 3
-model_types:
-  1: yolov8m
-  2: rtdetr
-  3: yolov8l
-models:
-  1: models/WALDO30_yolov8m_640x640 (1).pt
-  2: models/4epoch-rtdetr-best.pt
-  3: models/4epoch-yolov8l-best.pt
 output_video: outputs/predict.mp4
 overlap_height_ratio: 0.1
 overlap_width_ratio: 0.1
 slice_height: 640
 slice_width: 640
+target_classes:
+- 0

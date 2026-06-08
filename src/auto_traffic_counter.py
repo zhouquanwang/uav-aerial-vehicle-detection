@@ -20,7 +20,7 @@ from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 
-# sklearn 是延迟导入的（仅在 analyze() 中需要）
+# scipy.signal.find_peaks 用于直方图峰值检测（延迟导入）
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -165,20 +165,32 @@ class AutoTrafficCounter:
         *,
         min_traj_len: int = 5,
         min_displacement: float = 30.0,
-        angle_threshold_deg: float = 30.0,
+        angle_threshold_deg: float = 10.0,
         min_samples: int = 3,
+        bin_width_deg: float = 8.0,
+        peak_prominence: int = 3,
+        free_angle_threshold_deg: float = 35.0,
     ):
         """
         Args:
             min_traj_len: 最小轨迹点数（少于该值视为噪声）
             min_displacement: 最小位移（像素），低于该值视为静止/短途
-            angle_threshold_deg: 方向聚类角度阈值（度），偏差小于此值的归为一簇
+            angle_threshold_deg: 方向聚类角度阈值（度），偏差在此范围内的归为一簇。
+                注意：若数据密集且覆盖较大角度范围，过大的阈值会导致DBSCAN
+                余弦距离产生"桥接效应"（chaining），多个方向被逐步连接为一个簇。
+                推荐值：简单路口15-20°，复杂场景10-15°。
             min_samples: DBSCAN 最小样本数（一个方向簇至少需要的轨迹数）
+            bin_width_deg: 直方图峰值检测的每格宽度（度），越小越精细
+            peak_prominence: 峰值最低显著度（车辆数），低于此值的峰不视为独立方向
+            free_angle_threshold_deg: 距离最近峰超过此角度识别为自由人/零散
         """
         self.min_traj_len = min_traj_len
         self.min_displacement = min_displacement
         self.angle_threshold_deg = angle_threshold_deg
         self.min_samples = min_samples
+        self.bin_width_deg = bin_width_deg
+        self.peak_prominence = peak_prominence
+        self.free_angle_threshold_deg = free_angle_threshold_deg
 
         # tracker_id → VehicleTrajectory
         self._trajectories: Dict[int, VehicleTrajectory] = {}
@@ -224,22 +236,17 @@ class AutoTrafficCounter:
         """
         分析所有轨迹 → 方向聚类 → 生成流量报告。
 
+        算法: 直方图峰值检测 + 角度分配（彻底避免DBSCAN桥接效应）
         步骤:
-            1. 过滤：删除短轨迹（< min_traj_len）和静止车辆（位移 < min_displacement）
-            2. 方向提取：归一化方向向量 + 角度
-            3. DBSCAN 聚类：按余弦距离分组
-            4. 聚合：每簇统计车数 / 车型
+            1. 过滤短轨迹/静止车辆
+            2. 方向角度提取（0°=右, 90°=下, 180°=左, 270°=上）
+            3. 构建圆形角度直方图 → 高斯平滑 → 峰值检测 → 每个峰=一个主流方向
+            4. 每辆车的轨迹分配到最近峰（角度距离 < free_angle_threshold）
+            5. 距所有峰都超过阈值的 → "自由人/零散"（flow_id=-1）
 
         Returns:
             List[TrafficFlow]，按车辆数降序排列
         """
-        try:
-            from sklearn.cluster import DBSCAN
-        except ImportError:
-            raise ImportError(
-                "AutoTrafficCounter 需要 scikit-learn。请安装: pip install scikit-learn"
-            )
-
         # Step 1: 过滤
         valid_trajs: List[VehicleTrajectory] = []
         for traj in self._trajectories.values():
@@ -247,84 +254,145 @@ class AutoTrafficCounter:
                 valid_trajs.append(traj)
 
         if len(valid_trajs) < self.min_samples:
-            # 轨迹太少，无法聚类，全部归为一个方向
             return self._fallback_single_flow(valid_trajs)
 
         # Step 2: 方向特征
         vectors = np.array([traj.direction_vector for traj in valid_trajs], dtype=np.float32)
         angles = np.array([traj.angle_deg for traj in valid_trajs], dtype=np.float32)
 
-        # Step 3: DBSCAN 聚类（余弦距离）
-        eps = 1.0 - np.cos(np.radians(self.angle_threshold_deg))
-        clustering = DBSCAN(eps=eps, min_samples=self.min_samples, metric="cosine").fit(vectors)
+        # Step 3: 直方图峰值检测（无桥接效应）
+        peak_angles, peak_bin_heights = self._detect_angle_peaks(angles)
 
-        labels = clustering.labels_
+        # Step 4: 将每辆车分配到最近的峰（或标记为"自由人"）
+        labels, cluster_trajs, cluster_angles, cluster_vectors = self._assign_to_peaks(
+            valid_trajs, angles, vectors, peak_angles,
+        )
 
-        # Step 4: 按簇聚合
+        # Step 5: 聚合 Flow
         flows: List[TrafficFlow] = []
-        unique_labels = sorted(set(labels))
-
-        for label in unique_labels:
-            if label == -1:
-                # 噪声点：单独归为一个"其他"方向
+        for label, trajs_list in cluster_trajs.items():
+            if not trajs_list:
                 continue
+            c_angles = np.array(cluster_angles[label])
+            c_vectors = np.array(cluster_vectors[label])
 
-            mask = labels == label
-            cluster_trajs = [valid_trajs[i] for i in range(len(valid_trajs)) if mask[i]]
-            cluster_angles = angles[mask]
-            cluster_vectors = vectors[mask]
-
-            # 平均方向
-            mean_angle = float(np.mean(cluster_angles))
-            mean_vx = float(np.mean(cluster_vectors[:, 0]))
-            mean_vy = float(np.mean(cluster_vectors[:, 1]))
-            # 重新归一化平均向量
+            mean_angle = float(np.mean(c_angles))
+            mean_vx = float(np.mean(c_vectors[:, 0]))
+            mean_vy = float(np.mean(c_vectors[:, 1]))
             norm = float(np.sqrt(mean_vx * mean_vx + mean_vy * mean_vy))
-            if norm > 1e-6:
-                mean_vector = (mean_vx / norm, mean_vy / norm)
-            else:
-                mean_vector = (0.0, 0.0)
+            mean_vector = (mean_vx / norm, mean_vy / norm) if norm > 1e-6 else (0.0, 0.0)
 
-            # 车型统计
             by_class: Dict[int, int] = defaultdict(int)
-            for traj in cluster_trajs:
+            for traj in trajs_list:
                 by_class[traj.class_id] += 1
 
             flows.append(TrafficFlow(
-                flow_id=label,
+                flow_id=max(label, -1),
                 mean_angle=mean_angle,
                 unit_vector=mean_vector,
-                vehicle_count=len(cluster_trajs),
+                vehicle_count=len(trajs_list),
                 by_class=dict(by_class),
-                trajectories=cluster_trajs,
+                trajectories=trajs_list,
             ))
 
-        # 处理噪声点：将它们归入最近的非噪声簇
-        noise_mask = labels == -1
-        if noise_mask.any():
-            noise_trajs = [valid_trajs[i] for i in range(len(valid_trajs)) if noise_mask[i]]
-            noise_by_class: Dict[int, int] = defaultdict(int)
-            for traj in noise_trajs:
-                noise_by_class[traj.class_id] += 1
-
-            if noise_trajs:
-                flows.append(TrafficFlow(
-                    flow_id=-1,
-                    mean_angle=-1.0,
-                    unit_vector=(0.0, 0.0),
-                    vehicle_count=len(noise_trajs),
-                    by_class=dict(noise_by_class),
-                    trajectories=noise_trajs,
-                ))
-
-        # 按车辆数降序排列
         flows.sort(key=lambda f: f.vehicle_count, reverse=True)
-
-        # 重新编号
         for i, flow in enumerate(flows):
-            flow.flow_id = i
+            flow.flow_id = i if flow.flow_id >= 0 else flow.flow_id
 
         return flows
+
+    # ── 直方图峰值检测 ────────────────────────────────────────
+
+    def _detect_angle_peaks(self, angles: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        构建圆形角度直方图 → 高斯平滑 → 峰值检测。
+
+        返回: (peak_angles_deg, peak_heights) 列表
+        """
+        try:
+            from scipy.ndimage import gaussian_filter1d
+            from scipy.signal import find_peaks
+        except ImportError:
+            raise ImportError(
+                "AutoTrafficCounter 直方图模式需要 scipy。请安装: pip install scipy"
+            )
+
+        n_bins = max(30, int(360.0 / self.bin_width_deg))
+        bin_edges = np.linspace(0, 360, n_bins + 1)
+        hist, _ = np.histogram(angles, bins=bin_edges)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+
+        # 圆形延拓：首尾各复制 1/3 直方图长度，处理后去重
+        pad_len = max(1, n_bins // 3)
+        hist_padded = np.concatenate([hist[-pad_len:], hist, hist[:pad_len]])
+        centers_padded = np.concatenate([
+            bin_centers[-pad_len:] - 360,
+            bin_centers,
+            bin_centers[:pad_len] + 360,
+        ])
+
+        # 高斯平滑（轻度平滑，避免磨平真实峰）
+        sigma = max(0.8, self.bin_width_deg / 6.0)
+        hist_smooth = gaussian_filter1d(hist_padded.astype(float), sigma=sigma)
+
+        # 峰值检测
+        prominence = max(1, self.peak_prominence)
+        peaks, props = find_peaks(hist_smooth, prominence=prominence, distance=max(2, int(15 / self.bin_width_deg)))
+
+        peak_angles = centers_padded[peaks]
+        peak_heights = hist_smooth[peaks]
+
+        # 去重（圆形等效）：保留 prominence 更高的
+        visited = set()
+        keep_idx = []
+        for i in range(len(peak_angles)):
+            mod_deg = round(peak_angles[i] % 360, 1)
+            if mod_deg not in visited:
+                visited.add(mod_deg)
+                keep_idx.append(i)
+
+        return peak_angles[keep_idx], peak_heights[keep_idx]
+
+    # ── 分配到峰 ───────────────────────────────────────────────
+
+    def _assign_to_peaks(
+        self,
+        valid_trajs: List[VehicleTrajectory],
+        angles: np.ndarray,
+        vectors: np.ndarray,
+        peak_angles: np.ndarray,
+    ):
+        """将每条轨迹分配到最近峰，或标记为自由人(-1)"""
+        clusters_trajs = defaultdict(list)
+        clusters_angles = defaultdict(list)
+        clusters_vectors = defaultdict(list)
+
+        for i, angle in enumerate(angles):
+            if len(peak_angles) == 0:
+                # 没有检测到峰，全归为自由人
+                clusters_trajs[-1].append(valid_trajs[i])
+                clusters_angles[-1].append(angle)
+                clusters_vectors[-1].append(vectors[i])
+                continue
+
+            # 计算到各峰的角度距离（圆形距离）
+            dists = np.abs(angle - peak_angles)
+            dists = np.minimum(dists, 360 - dists)
+            nearest_idx = int(np.argmin(dists))
+            nearest_dist = dists[nearest_idx]
+
+            if nearest_dist <= self.free_angle_threshold_deg:
+                label = nearest_idx
+            else:
+                label = -1  # 自由人/零散
+
+            clusters_trajs[label].append(valid_trajs[i])
+            clusters_angles[label].append(angle)
+            clusters_vectors[label].append(vectors[i])
+
+        return None, clusters_trajs, clusters_angles, clusters_vectors
+
+    # ── 后备 ──────────────────────────────────────────────────
 
     def _fallback_single_flow(self, trajs: List[VehicleTrajectory]) -> List[TrafficFlow]:
         """轨迹太少时退化为单一方向"""
@@ -444,25 +512,9 @@ class AutoTrafficCounter:
                     length = float(np.sqrt(dx * dx + dy * dy))
                     if length > 2:
                         dx, dy = dx / length * 8, dy / length * 8
-                        cv2.arrowedLine(canvas, prev, last, color, thickness=2, tipLength=0.4, lineType=cv2.LINE_AA)
+                        cv2.arrowedLine(canvas, prev, last, color, thickness=2, tipLength=0.4)
 
-        # 图例
-        legend_y = 15
-        legend_x = canvas_width - 200
-        cv2.rectangle(canvas, (legend_x - 5, 0), (canvas_width, 20 + len(flows) * 22), (255, 255, 255), -1)
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (legend_x - 5, 0), (canvas_width, 22 + len(flows) * 22), (255, 255, 255), -1)
-        cv2.addWeighted(overlay, 0.85, canvas, 0.15, 0, canvas)
-
-        for i, flow in enumerate(flows):
-            color = get_flow_color(i)
-            label = self.get_flow_label(flow)
-            ly = legend_y + i * 20
-            cv2.line(canvas, (legend_x, ly + 8), (legend_x + 25, ly + 8), color, thickness=3, lineType=cv2.LINE_AA)
-            cv2.putText(
-                canvas, label, (legend_x + 30, ly + 12),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (50, 50, 50), 1, cv2.LINE_AA,
-            )
+        # 图例由 tkinter 悬浮窗底部 Label 显示，支持中文
 
         return canvas
 

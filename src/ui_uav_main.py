@@ -12,7 +12,7 @@ Author: UAV Detection System
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
 from typing import Optional, Callable, Tuple, List, Dict
 import cv2
@@ -46,6 +46,57 @@ from src.cross_section_counter import (
     get_entry_color,
 )
 from src.auto_traffic_counter import AutoTrafficCounter
+
+
+# ═══════════════════════════════════════════════════════════════
+# 深色科技主题设计系统 (Dark Tech Design System)
+# ═══════════════════════════════════════════════════════════════
+class DARK:
+    """深色科技主题配色"""
+    BG          = "#0a1628"   # 最深背景
+    PANEL       = "#0f1f3a"   # 面板背景
+    CARD        = "#142848"   # 卡片/输入区背景
+    SURFACE     = "#192d4d"   # 悬浮层背景
+    HEADER      = "#0d1a30"   # 标题栏背景
+    BORDER      = "#1a3050"   # 分隔线/边框
+    BORDER_LIGHT= "#234060"   # 浅色边框
+
+    # 文字
+    TEXT        = "#e0e6f0"   # 主文字
+    TEXT_SUB    = "#8a95a5"   # 次要文字
+    TEXT_MUTED  = "#556070"   # 辅助文字
+    TEXT_HINT   = "#3a4a5a"   # 提示文字
+
+    # 强调色
+    ACCENT      = "#00d4aa"   # 主强调-青色
+    ACCENT_HOVER= "#00f0c0"   # 悬停
+    BLUE        = "#3b82f6"   # 蓝色
+    PURPLE      = "#8b5cf6"   # 紫色
+    GREEN       = "#10b981"   # 绿色
+    ORANGE      = "#f59e0b"   # 橙色
+    RED         = "#ef4444"   # 红色
+    YELLOW      = "#facc15"   # 黄色
+
+    # 功能色
+    BTN_PRIMARY  = "#00d4aa"  # 主按钮
+    BTN_SUCCESS  = "#10b981"  # 成功按钮
+    BTN_DANGER   = "#ef4444"  # 危险按钮
+    BTN_DISABLED = "#2a3a50"  # 禁用按钮
+    BTN_DISABLED_TEXT = "#4a5a6a"  # 禁用按钮文字
+
+# 别名简写
+C = DARK
+
+# 字体系统
+FONT_TITLE    = ("Microsoft YaHei", 16, "bold")
+FONT_HEADER   = ("Microsoft YaHei", 12, "bold")
+FONT_SECTION  = ("Microsoft YaHei", 10, "bold")
+FONT_BODY     = ("Microsoft YaHei", 9)
+FONT_SMALL    = ("Microsoft YaHei", 8)
+FONT_TINY     = ("Microsoft YaHei", 7)
+FONT_MONO     = ("Consolas", 9, "bold")
+FONT_MONO_SM  = ("Consolas", 9)
+FONT_TIME     = ("Consolas", 14, "bold")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -138,12 +189,15 @@ class VideoPlayerThread(threading.Thread):
     """
     
     def __init__(self, video_path: Path, frame_buffer: FrameBuffer, 
-                 command_queue: Queue, fps: float = 30.0):
+                 command_queue: Queue, fps: float = 30.0,
+                 start_frame: int = 0, end_frame: int | None = None):
         super().__init__(daemon=True, name="VideoPlayer")
         self.video_path = video_path
         self.frame_buffer = frame_buffer
         self.command_queue = command_queue
         self.target_fps = fps
+        self._start_frame = start_frame
+        self._end_frame = end_frame  # None 表示无限制
         self._running = threading.Event()
         self._paused = threading.Event()
         self._paused.set()  # 初始暂停
@@ -162,6 +216,11 @@ class VideoPlayerThread(threading.Thread):
             return
             
         self._total_frames = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if self._end_frame is None:
+            self._end_frame = self._total_frames - 1
+        # 确保起始位置在有效范围内
+        self._cap.set(cv2.CAP_PROP_POS_FRAMES, self._start_frame)
+        self._current_frame = self._start_frame
         actual_fps = self._cap.get(cv2.CAP_PROP_FPS) or self.target_fps
         self._running.set()
         
@@ -202,9 +261,16 @@ class VideoPlayerThread(threading.Thread):
             # 读取帧
             ret, frame = self._cap.read()
             if not ret:
-                # 到达末尾，回到起始位置或停止
-                self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                self._current_frame = 0
+                # 到达末尾，回到起帧位置
+                self._cap.set(cv2.CAP_PROP_POS_FRAMES, self._start_frame)
+                self._current_frame = self._start_frame
+                next_frame_time = time.time()
+                continue
+
+            # 检查是否超出终点范围，超出则回跳
+            if self._current_frame >= self._end_frame:
+                self._cap.set(cv2.CAP_PROP_POS_FRAMES, self._start_frame)
+                self._current_frame = self._start_frame
                 next_frame_time = time.time()
                 continue
                 
@@ -242,12 +308,14 @@ class VideoPlayerThread(threading.Thread):
                 print("[Player] 暂停")
             elif cmd.type == PlayerCommand.STOP:
                 self._paused.set()
-                self._seek_target = 0
+                self._seek_target = self._start_frame
                 self._seek_requested.set()
             elif cmd.type == PlayerCommand.SEEK and cmd.value is not None:
-                self._seek_target = max(0, min(cmd.value, self._total_frames - 1))
+                # 限制在起终点范围内
+                _t = max(0, min(cmd.value, self._total_frames - 1))
+                _t = max(self._start_frame, min(_t, self._end_frame))
+                self._seek_target = _t
                 self._seek_requested.set()
-                print(f"[Player] Seek到帧: {self._seek_target}")
             elif cmd.type == PlayerCommand.SPEED and cmd.value is not None:
                 self._speed = max(0.25, min(cmd.value, 4.0))
                 print(f"[Player] 速度设置为: {self._speed}x")
@@ -294,7 +362,7 @@ class TimelineSlider(tk.Canvas):
             parent,
             width=width,
             height=height,
-            bg="#f5f5f5",
+            bg=C.PANEL,
             highlightthickness=0,
             **kwargs
         )
@@ -354,7 +422,7 @@ class TimelineSlider(tk.Canvas):
             width = 800
 
         # 背景
-        self.create_rectangle(0, 0, width, height, fill="#e8e8e8", outline="")
+        self.create_rectangle(0, 0, width, height, fill=C.PANEL, outline="")
 
         # 计算位置
         sx = self._value_to_x(self.start_value)
@@ -367,14 +435,14 @@ class TimelineSlider(tk.Canvas):
         self.create_rectangle(
             self.padx, self.track_top,
             width - self.padx, self.track_bottom,
-            fill="#cccccc", outline=""
+            fill=C.BORDER, outline=""
         )
 
         # 选中范围
         self.create_rectangle(
             sx, self.track_top,
             ex, self.track_bottom,
-            fill="#4a90d9", outline=""
+            fill=C.ACCENT, outline="", stipple="gray25"
         )
 
         # 播放头
@@ -383,29 +451,29 @@ class TimelineSlider(tk.Canvas):
                 self.playhead_x - 5, self.track_top - 4,
                 self.playhead_x + 5, self.track_top - 4,
                 self.playhead_x, self.track_top + 1,
-                fill="#333333", outline="#333333"
+                fill=C.TEXT, outline=C.TEXT
             )
             self.create_line(
                 self.playhead_x, self.track_top,
                 self.playhead_x, self.track_bottom,
-                fill="#ffffff", width=2
+                fill=C.ACCENT, width=2
             )
 
         # 滑块手柄
-        self._draw_range_handle(sx, self.track_top, self.track_bottom, "#4caf50", "start")
-        self._draw_range_handle(ex, self.track_top, self.track_bottom, "#ff9800", "end")
+        self._draw_range_handle(sx, self.track_top, self.track_bottom, C.GREEN, "start")
+        self._draw_range_handle(ex, self.track_top, self.track_bottom, C.ORANGE, "end")
 
         # 范围信息
         info_y = self.track_bottom + 12
         self.create_text(
             self.padx, info_y,
             text=f"起始: {self.start_value}帧 ({self._format_frame_time(self.start_value)})",
-            fill="#4caf50", font=("Consolas", 7), anchor="w"
+            fill=C.GREEN, font=("Consolas", 7), anchor="w"
         )
         self.create_text(
             width - self.padx, info_y,
             text=f"结束: {self.end_value}帧 ({self._format_frame_time(self.end_value)})",
-            fill="#ff9800", font=("Consolas", 7), anchor="e"
+            fill=C.ORANGE, font=("Consolas", 7), anchor="e"
         )
 
     def _draw_time_ticks(self, width: int):
@@ -435,11 +503,11 @@ class TimelineSlider(tk.Canvas):
             if x > width - self.padx:
                 break
 
-            self.create_line(x, self.track_top - 4, x, self.track_top - 1, fill="#999999", width=1)
+            self.create_line(x, self.track_top - 4, x, self.track_top - 1, fill=C.TEXT_MUTED, width=1)
             frame_num = int(i * tick_interval_frames)
             if frame_num <= self.max_val:
                 time_str = self._format_frame_time(frame_num)
-                self.create_text(x, self.track_top - 7, text=time_str, fill="#666666", font=("Consolas", 7))
+                self.create_text(x, self.track_top - 7, text=time_str, fill=C.TEXT_SUB, font=("Consolas", 7))
 
     def _draw_range_handle(self, x: float, top: int, bottom: int, color: str, handle_type: str):
         """绘制范围手柄"""
@@ -447,8 +515,8 @@ class TimelineSlider(tk.Canvas):
         y = top + h // 2
         r = 5
         self.create_oval(x - r, y - r * 2, x + r, y + r * 2,
-                        fill=color, outline="#ffffff", width=1.5)
-        self.create_line(x - 2, y, x + 2, y, fill="#ffffff", width=1.5)
+                        fill=color, outline=C.BG, width=1.5)
+        self.create_line(x - 2, y, x + 2, y, fill=C.BG, width=1.5)
 
     def _format_frame_time(self, frame: int) -> str:
         total_sec = frame / 30
@@ -584,24 +652,23 @@ class TimelineSlider(tk.Canvas):
 # ═══════════════════════════════════════════════════════════════
 
 class IntScale(tk.Frame):
-    """整数型滑块（支持拖动和直接输入）"""
+    """整数型滑块（支持拖动和直接输入）- 深色科技主题"""
     def __init__(self, parent, label, min_val, max_val, default_val, command=None, **kwargs):
         super().__init__(parent, **kwargs)
-        self.configure(bg="#ffffff")
+        self.configure(bg=C.CARD)
         self.min_val = min_val
         self.max_val = max_val
         self.command = command
 
-        self.label_text = tk.Label(self, text=label, bg="#ffffff", fg="#333333",
-                                   font=("Microsoft YaHei", 8), width=6, anchor=tk.W)
+        self.label_text = tk.Label(self, text=label, bg=C.CARD, fg=C.TEXT_SUB,
+                                   font=FONT_SMALL, width=6, anchor=tk.W)
         self.label_text.pack(side=tk.LEFT, padx=(0, 2))
 
         self.entry_var = tk.StringVar(value=str(default_val))
         self.value_entry = tk.Entry(self, textvariable=self.entry_var,
-                                    bg="#f0f4ff", fg="#4a90d9",
-                                    font=("Consolas", 9, "bold"),
-                                    width=3, justify=tk.CENTER,
-                                    relief=tk.FLAT, bd=1)
+                                    bg=C.SURFACE, fg=C.ACCENT,
+                                    font=FONT_MONO, width=3, justify=tk.CENTER,
+                                    relief=tk.FLAT, bd=0, insertbackground=C.ACCENT)
         self.value_entry.pack(side=tk.LEFT, padx=(0, 2))
         self.value_entry.bind("<Return>", self._on_entry_changed)
         self.value_entry.bind("<FocusOut>", self._on_entry_changed)
@@ -642,25 +709,24 @@ class IntScale(tk.Frame):
 
 
 class FloatScale(tk.Frame):
-    """浮点型滑块（支持拖动和直接输入）"""
+    """浮点型滑块（支持拖动和直接输入）- 深色科技主题"""
     def __init__(self, parent, label, min_val, max_val, default_val, step=0.05, decimals=2, command=None, **kwargs):
         super().__init__(parent, **kwargs)
-        self.configure(bg="#ffffff")
+        self.configure(bg=C.CARD)
         self.decimals = decimals
         self.min_val = min_val
         self.max_val = max_val
         self.command = command
 
-        self.label_text = tk.Label(self, text=label, bg="#ffffff", fg="#333333",
-                                   font=("Microsoft YaHei", 8), width=6, anchor=tk.W)
+        self.label_text = tk.Label(self, text=label, bg=C.CARD, fg=C.TEXT_SUB,
+                                   font=FONT_SMALL, width=6, anchor=tk.W)
         self.label_text.pack(side=tk.LEFT, padx=(0, 2))
 
         self.entry_var = tk.StringVar(value=f"{default_val:.{decimals}f}")
         self.value_entry = tk.Entry(self, textvariable=self.entry_var,
-                                    bg="#f0f4ff", fg="#4a90d9",
-                                    font=("Consolas", 9, "bold"),
-                                    width=4, justify=tk.CENTER,
-                                    relief=tk.FLAT, bd=1)
+                                    bg=C.SURFACE, fg=C.ACCENT,
+                                    font=FONT_MONO, width=4, justify=tk.CENTER,
+                                    relief=tk.FLAT, bd=0, insertbackground=C.ACCENT)
         self.value_entry.pack(side=tk.LEFT, padx=(0, 2))
         self.value_entry.bind("<Return>", self._on_entry_changed)
         self.value_entry.bind("<FocusOut>", self._on_entry_changed)
@@ -712,7 +778,26 @@ class UAVDetectionUI:
         self.root.title("无人机航拍视频检测系统")
         self.root.geometry("1600x980")
         self.root.minsize(1400, 900)
-        self.root.configure(bg="#ffffff")
+        self.root.configure(bg=C.BG)
+
+        # ── ttk 深色主题 ──
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TScrollbar",
+            background=C.CARD, troughcolor=C.BG, arrowsize=12,
+            arrowcolor=C.TEXT_SUB, bordercolor=C.BG, lightcolor=C.CARD, darkcolor=C.CARD)
+        style.configure("Treeview",
+            background=C.BG, foreground=C.TEXT, fieldbackground=C.BG,
+            borderwidth=0, font=FONT_BODY)
+        style.configure("Treeview.Heading",
+            background=C.CARD, foreground=C.ACCENT, font=("Microsoft YaHei",9,"bold"),
+            borderwidth=0)
+        style.map("Treeview", background=[("selected", C.ACCENT)], foreground=[("selected", C.BG)])
+        style.configure("TCombobox",
+            fieldbackground=C.SURFACE, background=C.CARD, foreground=C.TEXT,
+            arrowcolor=C.ACCENT, selectbackground=C.CARD, selectforeground=C.TEXT)
+        style.map("TCombobox", fieldbackground=[("readonly", C.SURFACE)])
+        style.configure("TScale", background=C.CARD, troughcolor=C.BORDER, sliderlength=14)
 
         # ═══════ 核心变量 ═══════
         self.video_path: Optional[Path] = None
@@ -767,6 +852,9 @@ class UAVDetectionUI:
         self.var_export_traffic = tk.BooleanVar(value=True)     # 输出流量统计表
         self.var_enable_road_detect = tk.BooleanVar(value=False) # 启用车道边界检测
         self.var_auto_traffic = tk.BooleanVar(value=False)       # 自动流量统计
+        self.var_show_trajectory = tk.BooleanVar(value=True)   # 实时绘制轨迹
+        self.var_export_trajectory_img = tk.BooleanVar(value=True)  # 输出分类轨迹图
+        self.var_export_trajectory_data = tk.BooleanVar(value=True)  # 输出轨迹坐标数据
 
         # 流量统计设置
         self.var_traffic_count = tk.BooleanVar(value=False)
@@ -855,10 +943,12 @@ class UAVDetectionUI:
     # 菜单栏
     # ═════════════════════════════════════════
     def _create_menu(self):
-        menubar = tk.Menu(self.root, bg="#f8f8f8", fg="#333333", font=("Microsoft YaHei", 10))
-        self.root.config(menu=menubar)
+        menubar = tk.Menu(self.root, bg=C.BG, fg=C.TEXT, font=FONT_BODY,
+                         activebackground=C.ACCENT, activeforeground=C.BG)
+        self.root.config(menu=menubar, bg=C.BG)
 
-        file_menu = tk.Menu(menubar, tearoff=0, bg="#ffffff", fg="#333333", font=("Microsoft YaHei", 10))
+        file_menu = tk.Menu(menubar, tearoff=0, bg=C.CARD, fg=C.TEXT, font=FONT_BODY,
+                          activebackground=C.ACCENT, activeforeground=C.BG)
         menubar.add_cascade(label="  文件  ", menu=file_menu)
         file_menu.add_command(label="  打开视频...", command=self.select_video, accelerator="Ctrl+O")
         file_menu.add_command(label="  加载配置...", command=self.load_config_file)
@@ -868,14 +958,16 @@ class UAVDetectionUI:
         file_menu.add_separator()
         file_menu.add_command(label="  退出", command=self._on_close, accelerator="Alt+F4")
 
-        detect_menu = tk.Menu(menubar, tearoff=0, bg="#ffffff", fg="#333333", font=("Microsoft YaHei", 10))
+        detect_menu = tk.Menu(menubar, tearoff=0, bg=C.CARD, fg=C.TEXT, font=FONT_BODY,
+                            activebackground=C.ACCENT, activeforeground=C.BG)
         menubar.add_cascade(label="  检测  ", menu=detect_menu)
         detect_menu.add_command(label="  开始检测", command=self.start_detection, accelerator="F5")
         detect_menu.add_command(label="  停止检测", command=self.stop_detection, accelerator="Esc")
         detect_menu.add_separator()
         detect_menu.add_command(label="  视频预览", command=self.toggle_play, accelerator="Space")
 
-        mark_menu = tk.Menu(menubar, tearoff=0, bg="#ffffff", fg="#333333", font=("Microsoft YaHei", 10))
+        mark_menu = tk.Menu(menubar, tearoff=0, bg=C.CARD, fg=C.TEXT, font=FONT_BODY,
+                          activebackground=C.ACCENT, activeforeground=C.BG)
         menubar.add_cascade(label="  标注  ", menu=mark_menu)
         mark_menu.add_command(label="  开始流量统计线标注", command=self.start_traffic_line_mark)
         mark_menu.add_command(label="  清除所有流量统计线", command=self.clear_all_traffic_lines)
@@ -883,7 +975,8 @@ class UAVDetectionUI:
         mark_menu.add_command(label="  保存截面线配置", command=self.save_traffic_config)
         mark_menu.add_command(label="  加载截面线配置", command=self.load_traffic_config)
 
-        help_menu = tk.Menu(menubar, tearoff=0, bg="#ffffff", fg="#333333", font=("Microsoft YaHei", 10))
+        help_menu = tk.Menu(menubar, tearoff=0, bg=C.CARD, fg=C.TEXT, font=FONT_BODY,
+                          activebackground=C.ACCENT, activeforeground=C.BG)
         menubar.add_cascade(label="  帮助  ", menu=help_menu)
         help_menu.add_command(label="  使用说明", command=self.show_help)
         help_menu.add_command(label="  参数说明", command=self.show_param_help)
@@ -893,52 +986,61 @@ class UAVDetectionUI:
     # 主布局
     # ═════════════════════════════════════════
     def _create_layout(self):
-        # 标题栏
-        # 标题栏 - 现代简洁风格
-        header = tk.Frame(self.root, bg="#ffffff", height=56)
+        # ── 全局根窗口背景 ──
+        self.root.configure(bg=C.BG)
+
+        # ── 标题栏 - 深色科技风格 ──
+        header = tk.Frame(self.root, bg=C.HEADER, height=56)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
 
         # 左侧标题区域
-        title_frame = tk.Frame(header, bg="#ffffff")
+        title_frame = tk.Frame(header, bg=C.HEADER)
         title_frame.pack(side=tk.LEFT, padx=20, pady=8)
 
         tk.Label(
             title_frame, text="无人机航拍视频检测系统",
-            bg="#ffffff", fg="#333333",
-            font=("Microsoft YaHei", 16, "bold")
+            bg=C.HEADER, fg=C.TEXT,
+            font=FONT_TITLE
         ).pack(anchor=tk.W)
 
         tk.Label(
-            title_frame, text="UAV Aerial Vehicle Detection System",
-            bg="#ffffff", fg="#aaaaaa",
+            title_frame, text="UAV Aerial Vehicle Detection System  v4.0",
+            bg=C.HEADER, fg=C.ACCENT,
             font=("Arial", 8)
         ).pack(anchor=tk.W)
 
+        # 右侧设备指示灯
+        status_frame = tk.Frame(header, bg=C.HEADER)
+        status_frame.pack(side=tk.RIGHT, padx=20, pady=8)
 
 
         # 分隔线
-        tk.Frame(self.root, bg="#e5e5e5", height=1).pack(fill=tk.X)
-
-        # ═══════════ 顶部工具栏 ═══════════
-        self._create_toolbar(self.root)
-
-        tk.Frame(self.root, bg="#e5e5e5", height=1).pack(fill=tk.X)
+        tk.Frame(self.root, bg=C.BORDER, height=1).pack(fill=tk.X)
 
         # 主容器
-        main_container = tk.Frame(self.root, bg="#ffffff")
+        main_container = tk.Frame(self.root, bg=C.BG)
         main_container.pack(fill=tk.BOTH, expand=True)
 
+        # 左侧文件浏览器
+        browser_frame = tk.Frame(main_container, bg=C.PANEL, width=250)
+        browser_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 2), pady=5)
+        browser_frame.pack_propagate(False)
+        self._create_file_browser(browser_frame)
+
         # 左侧视频区域
-        left_panel = tk.Frame(main_container, bg="#ffffff")
-        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 2), pady=5)
+        left_panel = tk.Frame(main_container, bg=C.BG)
+        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 2), pady=5)
         self._create_video_panel(left_panel)
 
         # 右侧参数面板
-        right_panel = tk.Frame(main_container, bg="#f5f5f5", width=380)
-        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=0, pady=0)
+        right_panel = tk.Frame(main_container, bg=C.PANEL, width=380)
+        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(2, 0), pady=0)
         right_panel.pack_propagate(False)
         self._create_param_panel(right_panel)
+
+        # 扫描工作区文件
+        self.root.after(200, self._scan_file_browser)
 
     # ═════════════════════════════════════════
     # 视频面板
@@ -947,32 +1049,31 @@ class UAVDetectionUI:
         """创建视频播放器界面"""
 
         # 视频显示框
-        video_frame = tk.Frame(parent, bg="#e8e8e8")
+        video_frame = tk.Frame(parent, bg=C.BG, highlightthickness=1,
+                              highlightbackground=C.BORDER)
         video_frame.pack(fill=tk.BOTH, expand=True)
 
         self.video_label = tk.Label(
             video_frame,
             text="请选择视频文件开始\n支持 MP4、AVI、MOV 等格式",
-            bg="#f5f5f5", fg="#666666",
+            bg=C.PANEL, fg=C.TEXT_SUB,
             font=("Microsoft YaHei", 14)
         )
         self.video_label.pack(fill=tk.BOTH, expand=True)
 
-        # 显示尺寸（用于坐标映射）
+        # 显示尺寸
         self.display_width = 920
         self.display_height = 540
-
-        # 绑定鼠标事件用于标注
         self.video_label.bind("<Button-1>", self._on_video_click)
 
         # ─── 时间轴区域 ───
-        timeline_frame = tk.Frame(parent, bg="#f5f5f5", height=65)
+        timeline_frame = tk.Frame(parent, bg=C.PANEL, height=65)
         timeline_frame.pack(fill=tk.X, pady=(3, 0))
         timeline_frame.pack_propagate(False)
 
         tk.Label(timeline_frame, text="⏱ 时间轴 - 拖动滑块设置检测起止范围",
-                bg="#f5f5f5", fg="#666666",
-                font=("Microsoft YaHei", 8)).pack(anchor=tk.W, padx=5, pady=(2, 1))
+                bg=C.PANEL, fg=C.TEXT_SUB,
+                font=FONT_SMALL).pack(anchor=tk.W, padx=5, pady=(2, 1))
 
         self.timeline = TimelineSlider(
             timeline_frame,
@@ -982,222 +1083,105 @@ class UAVDetectionUI:
         self.timeline.pack(fill=tk.X, padx=5, pady=1)
 
         # ─── 播放控制条 ───
-        control_frame = tk.Frame(parent, bg="#ffffff")
+        control_frame = tk.Frame(parent, bg=C.BG)
         control_frame.pack(fill=tk.X, pady=(5, 0))
 
-        # 左侧控制按钮组
-        left_controls = tk.Frame(control_frame, bg="#ffffff")
+        left_controls = tk.Frame(control_frame, bg=C.BG)
         left_controls.pack(side=tk.LEFT, padx=10)
 
-        self.play_btn = tk.Button(
-            left_controls, text="▶",
-            command=self.toggle_play,
-            bg="#4a90d9", fg="#ffffff",
-            relief=tk.FLAT, width=3, height=1,
-            font=("Arial", 16), cursor="hand2"
-        )
+        def _ctrl_btn(parent, text, cmd, accent=False, font_size=16, w=3):
+            return tk.Button(parent, text=text, command=cmd,
+                bg=C.ACCENT if accent else C.CARD, fg=C.BG if accent else C.TEXT_SUB,
+                relief=tk.FLAT, width=w, height=1, font=("Arial", font_size), cursor="hand2",
+                activebackground=C.ACCENT, activeforeground=C.BG)
+
+        self.play_btn = _ctrl_btn(left_controls, "▶", self.toggle_play, accent=True)
         self.play_btn.pack(side=tk.LEFT, padx=2)
 
-        tk.Button(
-            left_controls, text="■",
-            command=self.stop_playback,
-            bg="#e0e0e0", fg="#666666",
-            relief=tk.FLAT, width=2, height=1,
-            font=("Arial", 12), cursor="hand2"
-        ).pack(side=tk.LEFT, padx=2)
-
-        tk.Button(
-            left_controls, text="◀◀",
-            command=lambda: self._seek_relative(-1),
-            bg="#e0e0e0", fg="#666666",
-            relief=tk.FLAT, width=3, height=1,
-            font=("Arial", 9), cursor="hand2"
-        ).pack(side=tk.LEFT, padx=(5, 2))
-
-        tk.Button(
-            left_controls, text="▶▶",
-            command=lambda: self._seek_relative(1),
-            bg="#e0e0e0", fg="#666666",
-            relief=tk.FLAT, width=3, height=1,
-            font=("Arial", 9), cursor="hand2"
-        ).pack(side=tk.LEFT, padx=2)
-
-        tk.Button(
-            left_controls, text="|◀",
-            command=lambda: self._seek_absolute(self.start_frame),
-            bg="#e0e0e0", fg="#666666",
-            relief=tk.FLAT, width=2, height=1,
-            font=("Arial", 9), cursor="hand2"
-        ).pack(side=tk.LEFT, padx=(5, 2))
-
-        tk.Button(
-            left_controls, text="▶|",
-            command=lambda: self._seek_absolute(self.end_frame),
-            bg="#e0e0e0", fg="#666666",
-            relief=tk.FLAT, width=2, height=1,
-            font=("Arial", 9), cursor="hand2"
-        ).pack(side=tk.LEFT, padx=2)
+        _ctrl_btn(left_controls, "■", self.stop_playback, font_size=12, w=2).pack(side=tk.LEFT, padx=2)
+        _ctrl_btn(left_controls, "◀◀", lambda: self._seek_relative(-1), font_size=9, w=3).pack(side=tk.LEFT, padx=(5,2))
+        _ctrl_btn(left_controls, "▶▶", lambda: self._seek_relative(1), font_size=9, w=3).pack(side=tk.LEFT, padx=2)
+        _ctrl_btn(left_controls, "|◀", lambda: self._seek_absolute(self.start_frame), font_size=9, w=2).pack(side=tk.LEFT, padx=(5,2))
+        _ctrl_btn(left_controls, "▶|", lambda: self._seek_absolute(self.end_frame), font_size=9, w=2).pack(side=tk.LEFT, padx=2)
 
         # 中间时间信息
-        center_frame = tk.Frame(control_frame, bg="#ffffff")
+        center_frame = tk.Frame(control_frame, bg=C.BG)
         center_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        self.time_info = tk.Label(
-            center_frame, text="00:00:00",
-            bg="#ffffff", fg="#333333",
-            font=("Consolas", 14, "bold")
-        )
+        self.time_info = tk.Label(center_frame, text="00:00:00",
+            bg=C.BG, fg=C.ACCENT, font=FONT_TIME)
         self.time_info.pack(pady=(8, 0))
 
-        self.frame_info = tk.Label(
-            center_frame, text="帧: 0 / 0",
-            bg="#ffffff", fg="#888888",
-            font=("Consolas", 9)
-        )
+        self.frame_info = tk.Label(center_frame, text="帧: 0 / 0",
+            bg=C.BG, fg=C.TEXT_MUTED, font=FONT_MONO_SM)
         self.frame_info.pack()
 
         # 右侧控制
-        right_controls = tk.Frame(control_frame, bg="#ffffff")
+        right_controls = tk.Frame(control_frame, bg=C.BG)
         right_controls.pack(side=tk.RIGHT, padx=10)
 
-        self.time_remaining = tk.Label(
-            right_controls, text="-00:00:00",
-            bg="#ffffff", fg="#888888",
-            font=("Consolas", 11)
-        )
+        self.time_remaining = tk.Label(right_controls, text="-00:00:00",
+            bg=C.BG, fg=C.TEXT_MUTED, font=("Consolas", 11))
         self.time_remaining.pack(pady=(5, 0))
 
-        speed_frame = tk.Frame(right_controls, bg="#ffffff")
+        speed_frame = tk.Frame(right_controls, bg=C.BG)
         speed_frame.pack(pady=3)
 
-        tk.Label(speed_frame, text="速度:",
-                bg="#ffffff", fg="#666666",
-                font=("Microsoft YaHei", 8)).pack(side=tk.LEFT)
-
+        tk.Label(speed_frame, text="速度:", bg=C.BG, fg=C.TEXT_SUB, font=FONT_SMALL).pack(side=tk.LEFT)
         self.speed_var = tk.StringVar(value="1.0x")
-        speed_combo = ttk.Combobox(
-            speed_frame, textvariable=self.speed_var,
+        speed_combo = ttk.Combobox(speed_frame, textvariable=self.speed_var,
             values=["0.25x", "0.5x", "1.0x", "1.5x", "2.0x", "4.0x"],
-            width=5, state="readonly"
-        )
+            width=5, state="readonly")
         speed_combo.pack(side=tk.LEFT, padx=3)
         speed_combo.bind("<<ComboboxSelected>>", self._on_speed_changed)
+        # StringVar trace 作为备用保障，确保倍速变化必触发
+        self.speed_var.trace_add("write", lambda *_: self._on_speed_changed())
 
         # ─── 检测结果区域 ───
-        result_frame = tk.Frame(parent, bg="#f5f5f5", height=150)
+        result_frame = tk.Frame(parent, bg=C.PANEL, height=150)
         result_frame.pack(fill=tk.X, pady=(5, 0))
         result_frame.pack_propagate(False)
 
         tk.Label(result_frame, text="📋 检测日志",
-                bg="#f5f5f5", fg="#333333",
-                font=("Microsoft YaHei", 10, "bold")
-        ).pack(anchor=tk.W, padx=10, pady=(5, 0))
+            bg=C.PANEL, fg=C.TEXT, font=FONT_SECTION).pack(anchor=tk.W, padx=10, pady=(5, 0))
 
-        result_text_frame = tk.Frame(result_frame, bg="#ffffff")
+        result_text_frame = tk.Frame(result_frame, bg=C.CARD)
         result_text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         scroll_y = tk.Scrollbar(result_text_frame)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.text_result = tk.Text(
-            result_text_frame,
-            bg="#ffffff", fg="#333333",
-            insertbackground="#4a90d9",
-            font=("Consolas", 9),
-            yscrollcommand=scroll_y.set,
-            relief=tk.SOLID, state="disabled"
-        )
+        self.text_result = tk.Text(result_text_frame,
+            bg=C.BG, fg=C.TEXT, insertbackground=C.ACCENT,
+            font=("Consolas", 9), yscrollcommand=scroll_y.set,
+            relief=tk.FLAT, state="disabled", bd=0, padx=5, pady=3)
         self.text_result.pack(fill=tk.BOTH, expand=True)
         scroll_y.config(command=self.text_result.yview)
 
         # ─── 进度条 ───
-        progress_frame = tk.Frame(parent, bg="#ffffff", height=45)
+        progress_frame = tk.Frame(parent, bg=C.BG, height=45)
         progress_frame.pack(fill=tk.X, pady=(5, 0))
         progress_frame.pack_propagate(False)
 
-        self.stage_label = tk.Label(
-            progress_frame, text="等待开始",
-            bg="#ffffff", fg="#4a90d9",
-            font=("Microsoft YaHei", 9, "bold")
-        )
+        self.stage_label = tk.Label(progress_frame, text="等待开始",
+            bg=C.BG, fg=C.ACCENT, font=("Microsoft YaHei", 9, "bold"))
         self.stage_label.pack(side=tk.TOP, padx=10, pady=(3, 0))
 
-        progress_bottom = tk.Frame(progress_frame, bg="#ffffff")
+        progress_bottom = tk.Frame(progress_frame, bg=C.BG)
         progress_bottom.pack(fill=tk.X, pady=(2, 5))
 
-        self.progress_label = tk.Label(
-            progress_bottom, text="进度:",
-            bg="#ffffff", fg="#888888",
-            font=("Microsoft YaHei", 9)
-        )
-        self.progress_label.pack(side=tk.LEFT, padx=10)
+        tk.Label(progress_bottom, text="进度:", bg=C.BG, fg=C.TEXT_MUTED,
+            font=FONT_BODY).pack(side=tk.LEFT, padx=10)
 
-        self.progress_bar = tk.Canvas(
-            progress_bottom, bg="#e8e8e8",
-            height=12, highlightthickness=0
-        )
+        self.progress_bar = tk.Canvas(progress_bottom, bg=C.CARD,
+            height=12, highlightthickness=0)
         self.progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10, pady=0)
+        self.progress_bar.create_rectangle(2, 2, 400, 10, fill=C.BORDER, outline="")
+        self.progress_rect = self.progress_bar.create_rectangle(2, 2, 2, 10, fill=C.ACCENT, outline="")
 
-        self.progress_bar.create_rectangle(2, 2, 400, 10, fill="#e0e0e0", outline="")
-        self.progress_rect = self.progress_bar.create_rectangle(2, 2, 2, 10, fill="#4a90d9", outline="")
-
-        self.progress_percent = tk.Label(
-            progress_bottom, text="0%",
-            bg="#ffffff", fg="#4a90d9",
-            font=("Consolas", 9), width=5
-        )
+        self.progress_percent = tk.Label(progress_bottom, text="0%",
+            bg=C.BG, fg=C.ACCENT, font=("Consolas", 9), width=5)
         self.progress_percent.pack(side=tk.LEFT, padx=5)
-
-    # ═════════════════════════════════════════
-    # 顶部工具栏
-    # ═════════════════════════════════════════
-    def _create_toolbar(self, parent: tk.Frame):
-        """创建顶部工具栏（全宽，横跨左右面板上方）"""
-        toolbar = tk.Frame(parent, bg="#ffffff", height=42)
-        toolbar.pack(fill=tk.X, padx=0, pady=0)
-        toolbar.pack_propagate(False)
-
-        # 左侧：选择视频按钮
-        self.btn_select_video = tk.Button(
-            toolbar, text="📹 选择视频",
-            command=self.select_video,
-            bg="#4a90d9", fg="#ffffff",
-            relief=tk.FLAT, padx=14, pady=4,
-            font=("Microsoft YaHei", 9, "bold"), cursor="hand2"
-        )
-        self.btn_select_video.pack(side=tk.LEFT, padx=10, pady=4)
-
-        # 右侧：操作按钮组
-        btn_group = tk.Frame(toolbar, bg="#ffffff")
-        btn_group.pack(side=tk.RIGHT, padx=10, pady=4)
-
-        self.btn_preview = tk.Button(
-            btn_group, text="🔍 视频预览",
-            command=self.toggle_play,
-            bg="#e0e0e0", fg="#333333",
-            relief=tk.FLAT, padx=12, pady=4,
-            font=("Microsoft YaHei", 9, "bold"), cursor="hand2"
-        )
-        self.btn_preview.pack(side=tk.LEFT, padx=(0, 4))
-
-        self.btn_start = tk.Button(
-            btn_group, text="▶ 开始检测",
-            command=self.start_detection,
-            bg="#4caf50", fg="#ffffff",
-            relief=tk.FLAT, padx=12, pady=4,
-            font=("Microsoft YaHei", 9, "bold"), cursor="hand2"
-        )
-        self.btn_start.pack(side=tk.LEFT, padx=4)
-
-        self.btn_stop = tk.Button(
-            btn_group, text="⏹ 停止检测",
-            command=self.stop_detection,
-            bg="#e0e0e0", fg="#888888",
-            relief=tk.FLAT, padx=12, pady=4,
-            font=("Microsoft YaHei", 9, "bold"), cursor="hand2",
-            state="disabled"
-        )
-        self.btn_stop.pack(side=tk.LEFT, padx=(4, 0))
 
     # ═════════════════════════════════════════
     # 参数面板
@@ -1207,341 +1191,1271 @@ class UAVDetectionUI:
 
         # ═══════════ 功能配置 ═══════════
         tk.Label(parent, text="⚙ 功能配置",
-                bg="#f5f5f5", fg="#333333",
-                font=("Microsoft YaHei", 12, "bold")).pack(anchor=tk.W, padx=15, pady=(10, 5))
+                bg=C.PANEL, fg=C.TEXT, font=FONT_HEADER).pack(anchor=tk.W, padx=15, pady=(10, 5))
 
-        quick_frame = tk.Frame(parent, bg="#ffffff")
-        quick_frame.pack(fill=tk.X, padx=10, pady=(0, 3))
+        # Row 1: 画线流量统计 + 自动流量统计
+        quick_frame = tk.Frame(parent, bg=C.CARD)
+        quick_frame.pack(fill=tk.X, padx=10, pady=(3, 0))
+
         cb_traffic_top = tk.Checkbutton(
             quick_frame, text="📏 画线流量统计",
             variable=self.var_traffic_count,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
+            bg=C.CARD, fg=C.GREEN,
+            selectcolor=C.SURFACE, activebackground=C.CARD,
+            activeforeground=C.GREEN, font=FONT_BODY,
             anchor=tk.W, padx=10, pady=2
         )
         cb_traffic_top.pack(side=tk.LEFT)
-        cb_road_detect = tk.Checkbutton(
-            quick_frame, text="🛤 道路边界检测",
-            variable=self.var_enable_road_detect,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
-            anchor=tk.W, padx=10, pady=2
-        )
-        cb_road_detect.pack(side=tk.LEFT)
+
         cb_auto_traffic = tk.Checkbutton(
             quick_frame, text="📈 自动流量统计",
             variable=self.var_auto_traffic,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
+            bg=C.CARD, fg=C.GREEN,
+            selectcolor=C.SURFACE, activebackground=C.CARD,
+            activeforeground=C.GREEN, font=FONT_BODY,
             anchor=tk.W, padx=10, pady=2
         )
         cb_auto_traffic.pack(side=tk.LEFT)
 
-        # ═══════════ 滚动区域：检测模型 / 流量统计 / 检测参数 ═══════════
-        canvas = tk.Canvas(parent, bg="#f5f5f5", highlightthickness=0)
+        # Row 2: 道路边界检测
+        quick_frame2 = tk.Frame(parent, bg=C.CARD)
+        quick_frame2.pack(fill=tk.X, padx=10, pady=(0, 3))
+
+        cb_road_detect = tk.Checkbutton(
+            quick_frame2, text="🛤 道路边界检测",
+            variable=self.var_enable_road_detect,
+            bg=C.CARD, fg=C.GREEN,
+            selectcolor=C.SURFACE, activebackground=C.CARD,
+            activeforeground=C.GREEN, font=FONT_BODY,
+            anchor=tk.W, padx=10, pady=2
+        )
+        cb_road_detect.pack(side=tk.LEFT)
+
+        # ═══════════ 滚动区域 ═══════════
+        canvas = tk.Canvas(parent, bg=C.PANEL, highlightthickness=0)
         scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scroll_frame = tk.Frame(canvas, bg="#f5f5f5")
+        scroll_frame = tk.Frame(canvas, bg=C.PANEL)
 
         scroll_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-
         _canvas_window = canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
-
         def _on_canvas_configure(event):
             canvas.itemconfig(_canvas_window, width=event.width)
-
         canvas.bind("<Configure>", _on_canvas_configure)
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        # --- 检测模型 ---
-        model_section = tk.Frame(scroll_frame, bg="#ffffff")
+        # ── 检测模型 ──
+        model_section = tk.Frame(scroll_frame, bg=C.CARD)
         model_section.pack(fill=tk.X, padx=0, pady=(3, 5))
 
         tk.Label(model_section, text="🤖 检测模型",
-                bg="#ffffff", fg="#333333",
-                font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(8, 5))
+                bg=C.CARD, fg=C.TEXT, font=FONT_SECTION).pack(anchor=tk.W, padx=10, pady=(8, 5))
 
-        # 左右两栏
-        model_columns = tk.Frame(model_section, bg="#ffffff")
+        model_columns = tk.Frame(model_section, bg=C.CARD)
         model_columns.pack(fill=tk.X, padx=5)
 
         # 左栏：目标检测模型
-        left_col = tk.Frame(model_columns, bg="#ffffff")
+        left_col = tk.Frame(model_columns, bg=C.CARD)
         left_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 3))
 
         tk.Label(left_col, text="🎯 目标检测",
-                bg="#ffffff", fg="#4a90d9",
-                font=("Microsoft YaHei", 9, "bold")).pack(anchor=tk.W, padx=5, pady=(2, 3))
+                bg=C.CARD, fg=C.ACCENT, font=("Microsoft YaHei", 9, "bold")).pack(anchor=tk.W, padx=5, pady=(2, 3))
 
         for i, (key, name) in enumerate([
             (1, "WALDO YOLOv8m (平衡)"),
             (2, "RT-DETR (高精度)"),
             (3, "YOLOv8l (大模型)")
         ]):
-            rb = tk.Radiobutton(
-                left_col, text=f"  {name}",
+            rb = tk.Radiobutton(left_col, text=f"  {name}",
                 variable=self.model_select_var, value=key,
-                bg="#ffffff", fg="#333333",
-                selectcolor="#d4e6f7", activebackground="#ffffff",
-                activeforeground="#333333", font=("Microsoft YaHei", 9),
-                anchor=tk.W, padx=10, pady=2
-            )
+                bg=C.CARD, fg=C.TEXT,
+                selectcolor=C.SURFACE, activebackground=C.CARD,
+                activeforeground=C.TEXT, font=FONT_BODY,
+                anchor=tk.W, padx=10, pady=2)
             rb.pack(fill=tk.X)
 
-        # 右栏：道路边界检测模型
-        right_col = tk.Frame(model_columns, bg="#ffffff")
+        # 右栏
+        right_col = tk.Frame(model_columns, bg=C.CARD)
         right_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3, 5))
 
         tk.Label(right_col, text="🛤 道路边界检测",
-                bg="#ffffff", fg="#4caf50",
-                font=("Microsoft YaHei", 9, "bold")).pack(anchor=tk.W, padx=5, pady=(2, 3))
+                bg=C.CARD, fg=C.GREEN, font=("Microsoft YaHei", 9, "bold")).pack(anchor=tk.W, padx=5, pady=(2, 3))
 
         for key, name in [
             ("hsv", "HSV 色彩 (快速)"),
             ("segformer", "SegFormer (深度学习)"),
             ("hrnet_ocr", "HRNet-OCR (高精度)")
         ]:
-            rb = tk.Radiobutton(
-                right_col, text=f"  {name}",
+            rb = tk.Radiobutton(right_col, text=f"  {name}",
                 variable=self.road_model_var, value=key,
-                bg="#ffffff", fg="#333333",
-                selectcolor="#e8f4e8", activebackground="#ffffff",
-                activeforeground="#333333", font=("Microsoft YaHei", 9),
-                anchor=tk.W, padx=10, pady=2
-            )
+                bg=C.CARD, fg=C.TEXT,
+                selectcolor=C.SURFACE, activebackground=C.CARD,
+                activeforeground=C.TEXT, font=FONT_BODY,
+                anchor=tk.W, padx=10, pady=2)
             rb.pack(fill=tk.X)
 
-        # --- 流量统计设置 ---
-        tk.Frame(scroll_frame, bg="#e0e0e0", height=1).pack(fill=tk.X, padx=0)
-
-        traffic_section = tk.Frame(scroll_frame, bg="#ffffff")
-        traffic_section.pack(fill=tk.X, padx=0, pady=5)
-
-        tk.Label(traffic_section, text="🚦 流量统计设置",
-                bg="#ffffff", fg="#333333",
-                font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(8, 5))
-
-        # 右键提示（树形控件空白处或标题右键可添加进口道）
-        hint_label = tk.Label(traffic_section, text="💡 右键树形控件空白处或标题可添加进口道",
-                              bg="#ffffff", fg="#aaaaaa",
-                              font=("Microsoft YaHei", 8))
-        hint_label.pack(anchor=tk.W, padx=10, pady=(2, 0))
-
-        # 树形控件
-        tree_frame = tk.Frame(traffic_section, bg="#ffffff")
-        tree_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        self.tree_traffic = ttk.Treeview(
-            tree_frame, columns=("status",), show="tree headings",
-            height=8, selectmode="browse"
-        )
-        self.tree_traffic.heading("#0", text="进口道 / 转向")
-        self.tree_traffic.heading("status", text="状态")
-        self.tree_traffic.column("#0", width=150, anchor=tk.W)
-        self.tree_traffic.column("status", width=60, anchor=tk.CENTER)
-        self.tree_traffic.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        tree_scroll = tk.Scrollbar(tree_frame, orient="vertical", command=self.tree_traffic.yview)
-        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.tree_traffic.configure(yscrollcommand=tree_scroll.set)
-
-        self.tree_traffic.bind("<Button-3>", self._on_tree_right_click)
-        self.tree_traffic.bind("<Double-1>", self._on_tree_double_click)
-
         # --- 检测参数 ---
-        tk.Frame(scroll_frame, bg="#e0e0e0", height=1).pack(fill=tk.X, padx=0)
+        tk.Frame(scroll_frame, bg=C.BORDER, height=1).pack(fill=tk.X, padx=0)
 
-        param_section = tk.Frame(scroll_frame, bg="#ffffff")
+        param_section = tk.Frame(scroll_frame, bg=C.CARD)
         param_section.pack(fill=tk.X, padx=0, pady=5)
 
         tk.Label(param_section, text="📊 检测参数",
-                bg="#ffffff", fg="#333333",
-                font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(8, 5))
+                bg=C.CARD, fg=C.TEXT, font=FONT_SECTION).pack(anchor=tk.W, padx=10, pady=(8, 5))
 
-        # 置信度阈值 + 跳帧间隔 各占50%横向并排
-        param_row1 = tk.Frame(param_section, bg="#ffffff")
+        param_row1 = tk.Frame(param_section, bg=C.CARD)
         param_row1.pack(fill=tk.X, padx=5, pady=3)
 
-        left_half = tk.Frame(param_row1, bg="#ffffff", width=1)
+        left_half = tk.Frame(param_row1, bg=C.CARD, width=1)
         left_half.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 2))
-        self.conf_scale = FloatScale(
-            left_half, "置信度阈值:", 0.01, 0.95, 0.2,
-            command=self._on_confidence_changed
-        )
+        self.conf_scale = FloatScale(left_half, "置信度阈值:", 0.01, 0.95, 0.2,
+            command=self._on_confidence_changed)
         self.conf_scale.pack(fill=tk.X)
 
-        right_half = tk.Frame(param_row1, bg="#ffffff", width=1)
+        right_half = tk.Frame(param_row1, bg=C.CARD, width=1)
         right_half.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 0))
-        self.skip_scale = IntScale(
-            right_half, "跳帧间隔:", 0, 10, 2,
-            command=self._on_skip_interval_changed
-        )
+        self.skip_scale = IntScale(right_half, "跳帧间隔:", 0, 10, 2,
+            command=self._on_skip_interval_changed)
         self.skip_scale.pack(fill=tk.X)
 
-        # SAHI 切片检测开关
-        cb_sahi = tk.Checkbutton(
-            param_section, text="🧩 启用切片检测 (SAHI)",
+        cb_sahi = tk.Checkbutton(param_section, text="🧩 启用切片检测 (SAHI)",
             variable=self.var_use_sahi,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
-            anchor=tk.W, padx=10, pady=4
-        )
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=10, pady=4)
         cb_sahi.pack(fill=tk.X)
 
-        # 切片尺寸 + 切片重叠率 横向并排
-        param_row2 = tk.Frame(param_section, bg="#ffffff")
+        param_row2 = tk.Frame(param_section, bg=C.CARD)
         param_row2.pack(fill=tk.X, padx=10, pady=3)
 
-        # 切片尺寸 (左)
-        slice_col = tk.Frame(param_row2, bg="#ffffff")
+        slice_col = tk.Frame(param_row2, bg=C.CARD)
         slice_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        tk.Label(slice_col, text="切片尺寸", bg="#ffffff", fg="#888888",
-                font=("Microsoft YaHei", 8)).pack(anchor=tk.W)
-        slice_inner = tk.Frame(slice_col, bg="#ffffff")
-        slice_inner.pack(fill=tk.X)
-        tk.Label(slice_inner, text="H:", bg="#ffffff", fg="#666666",
-                font=("Consolas", 9)).pack(side=tk.LEFT)
+        tk.Label(slice_col, text="切片尺寸", bg=C.CARD, fg=C.TEXT_MUTED, font=FONT_SMALL).pack(anchor=tk.W)
+        slice_inner = tk.Frame(slice_col, bg=C.CARD); slice_inner.pack(fill=tk.X)
+        tk.Label(slice_inner, text="H:", bg=C.CARD, fg=C.TEXT_SUB, font=FONT_MONO_SM).pack(side=tk.LEFT)
         self.slice_h_var = tk.IntVar(value=640)
-        ttk.Combobox(slice_inner, textvariable=self.slice_h_var,
-                    values=[320, 480, 640, 800, 1024],
-                    width=5, state="readonly").pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(slice_inner, text="W:", bg="#ffffff", fg="#666666",
-                font=("Consolas", 9)).pack(side=tk.LEFT)
+        ttk.Combobox(slice_inner, textvariable=self.slice_h_var, values=[320,480,640,800,1024],
+            width=5, state="readonly").pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(slice_inner, text="W:", bg=C.CARD, fg=C.TEXT_SUB, font=FONT_MONO_SM).pack(side=tk.LEFT)
         self.slice_w_var = tk.IntVar(value=640)
-        ttk.Combobox(slice_inner, textvariable=self.slice_w_var,
-                    values=[320, 480, 640, 800, 1024],
-                    width=5, state="readonly").pack(side=tk.LEFT)
+        ttk.Combobox(slice_inner, textvariable=self.slice_w_var, values=[320,480,640,800,1024],
+            width=5, state="readonly").pack(side=tk.LEFT)
 
-        # 切片重叠率 (右)
-        overlap_col = tk.Frame(param_row2, bg="#ffffff")
+        overlap_col = tk.Frame(param_row2, bg=C.CARD)
         overlap_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
-        tk.Label(overlap_col, text="切片重叠率", bg="#ffffff", fg="#888888",
-                font=("Microsoft YaHei", 8)).pack(anchor=tk.W)
-        overlap_inner = tk.Frame(overlap_col, bg="#ffffff")
-        overlap_inner.pack(fill=tk.X)
-        tk.Label(overlap_inner, text="H:", bg="#ffffff", fg="#666666",
-                font=("Consolas", 9)).pack(side=tk.LEFT)
+        tk.Label(overlap_col, text="切片重叠率", bg=C.CARD, fg=C.TEXT_MUTED, font=FONT_SMALL).pack(anchor=tk.W)
+        overlap_inner = tk.Frame(overlap_col, bg=C.CARD); overlap_inner.pack(fill=tk.X)
+        tk.Label(overlap_inner, text="H:", bg=C.CARD, fg=C.TEXT_SUB, font=FONT_MONO_SM).pack(side=tk.LEFT)
         self.overlap_h_var = tk.DoubleVar(value=0.1)
-        ttk.Combobox(overlap_inner, textvariable=self.overlap_h_var,
-                    values=[0.0, 0.1, 0.2, 0.3, 0.5],
-                    width=5, state="readonly").pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(overlap_inner, text="W:", bg="#ffffff", fg="#666666",
-                font=("Consolas", 9)).pack(side=tk.LEFT)
+        ttk.Combobox(overlap_inner, textvariable=self.overlap_h_var, values=[0.0,0.1,0.2,0.3,0.5],
+            width=5, state="readonly").pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(overlap_inner, text="W:", bg=C.CARD, fg=C.TEXT_SUB, font=FONT_MONO_SM).pack(side=tk.LEFT)
         self.overlap_w_var = tk.DoubleVar(value=0.1)
-        ttk.Combobox(overlap_inner, textvariable=self.overlap_w_var,
-                    values=[0.0, 0.1, 0.2, 0.3, 0.5],
-                    width=5, state="readonly").pack(side=tk.LEFT)
+        ttk.Combobox(overlap_inner, textvariable=self.overlap_w_var, values=[0.0,0.1,0.2,0.3,0.5],
+            width=5, state="readonly").pack(side=tk.LEFT)
 
-        # 最大处理帧数
-        max_frame_frame = tk.Frame(param_section, bg="#ffffff")
+        max_frame_frame = tk.Frame(param_section, bg=C.CARD)
         max_frame_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Label(max_frame_frame, text="最大处理帧数:", bg="#ffffff", fg="#666666",
-                font=("Microsoft YaHei", 9)).pack(side=tk.LEFT)
+        tk.Label(max_frame_frame, text="最大处理帧数:", bg=C.CARD, fg=C.TEXT_SUB, font=FONT_BODY).pack(side=tk.LEFT)
         self.max_frames_var = tk.StringVar(value="全部")
         tk.Entry(max_frame_frame, textvariable=self.max_frames_var,
-                bg="#f5f5f5", fg="#333333",
-                font=("Consolas", 9), width=10).pack(side=tk.LEFT, padx=5)
-        tk.Label(max_frame_frame, text="(留空=全部)", bg="#ffffff", fg="#aaaaaa",
-                font=("Microsoft YaHei", 7)).pack(side=tk.LEFT)
+            bg=C.SURFACE, fg=C.TEXT, font=FONT_MONO_SM, width=10,
+            insertbackground=C.ACCENT, relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
+        tk.Label(max_frame_frame, text="(留空=全部)", bg=C.CARD, fg=C.TEXT_HINT, font=FONT_TINY).pack(side=tk.LEFT)
 
         # --- 检测显示设置 ---
-        tk.Frame(scroll_frame, bg="#e0e0e0", height=1).pack(fill=tk.X, padx=0)
+        tk.Frame(scroll_frame, bg=C.BORDER, height=1).pack(fill=tk.X, padx=0)
 
-        display_section = tk.Frame(scroll_frame, bg="#ffffff")
+        display_section = tk.Frame(scroll_frame, bg=C.CARD)
         display_section.pack(fill=tk.X, padx=0, pady=5)
 
         tk.Label(display_section, text="🖥 检测显示设置",
-                bg="#ffffff", fg="#333333",
-                font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(8, 5))
+                bg=C.CARD, fg=C.TEXT, font=FONT_SECTION).pack(anchor=tk.W, padx=10, pady=(8, 5))
 
-        display_row = tk.Frame(display_section, bg="#ffffff")
+        display_row = tk.Frame(display_section, bg=C.CARD)
         display_row.pack(fill=tk.X, padx=10, pady=4)
 
-        cb_show_lines = tk.Checkbutton(
-            display_row, text="🛣 显示车型标注",
+        cb_show_lines = tk.Checkbutton(display_row, text="🛣 显示车型标注",
             variable=self.var_show_count_lines,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
-            anchor=tk.W, padx=8, pady=2
-        )
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
         cb_show_lines.pack(side=tk.LEFT, padx=(0, 10))
 
-        cb_road_mask = tk.Checkbutton(
-            display_row, text="🛤 显示道路边界",
+        cb_road_mask = tk.Checkbutton(display_row, text="🛤 显示道路边界",
             variable=self.var_show_road_mask,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
-            anchor=tk.W, padx=8, pady=2
-        )
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
         cb_road_mask.pack(side=tk.LEFT)
 
-        # --- 输出设置 ---
-        tk.Frame(scroll_frame, bg="#e0e0e0", height=1).pack(fill=tk.X, padx=0)
+        # 显示轨迹（第二行）
+        display_row2 = tk.Frame(display_section, bg=C.CARD)
+        display_row2.pack(fill=tk.X, padx=10, pady=(0, 4))
 
-        output_section = tk.Frame(scroll_frame, bg="#ffffff")
+        cb_show_traj = tk.Checkbutton(display_row2, text="🛤 显示轨迹",
+            variable=self.var_show_trajectory,
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
+        cb_show_traj.pack(side=tk.LEFT)
+
+        # --- 输出设置 ---
+        tk.Frame(scroll_frame, bg=C.BORDER, height=1).pack(fill=tk.X, padx=0)
+
+        output_section = tk.Frame(scroll_frame, bg=C.CARD)
         output_section.pack(fill=tk.X, padx=0, pady=5)
 
         tk.Label(output_section, text="📤 输出设置",
-                bg="#ffffff", fg="#333333",
-                font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(8, 5))
+                bg=C.CARD, fg=C.TEXT, font=FONT_SECTION).pack(anchor=tk.W, padx=10, pady=(8, 5))
 
-        output_row = tk.Frame(output_section, bg="#ffffff")
+        output_row = tk.Frame(output_section, bg=C.CARD)
         output_row.pack(fill=tk.X, padx=10, pady=4)
 
-        cb_output = tk.Checkbutton(
-            output_row, text="📹 输出检测视频",
+        cb_output = tk.Checkbutton(output_row, text="📹 输出检测视频",
             variable=self.var_write_output,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
-            anchor=tk.W, padx=8, pady=2
-        )
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
         cb_output.pack(side=tk.LEFT, padx=(0, 10))
 
-        cb_traffic_xls = tk.Checkbutton(
-            output_row, text="📊 输出流量统计表",
+        self.cb_traffic_xls = tk.Checkbutton(output_row, text="📊 输出流量统计表",
             variable=self.var_export_traffic,
-            bg="#ffffff", fg="#4caf50",
-            selectcolor="#e8f4e8", activebackground="#ffffff",
-            activeforeground="#4caf50", font=("Microsoft YaHei", 9),
-            anchor=tk.W, padx=8, pady=2
-        )
-        cb_traffic_xls.pack(side=tk.LEFT)
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
+        self.cb_traffic_xls.pack(side=tk.LEFT)
 
-        # canvas 扩展填满剩余空间
+        # 联动：画线流量统计 或 自动流量统计 至少勾选一个时，输出流量统计表才可用
+        def _on_flow_stats_toggle(*_args):
+            has_line = self.var_traffic_count.get()
+            has_auto = self.var_auto_traffic.get()
+            state = "normal" if (has_line or has_auto) else "disabled"
+            self.cb_traffic_xls.config(state=state)
+            if not (has_line or has_auto):
+                self.var_export_traffic.set(False)
+        self.var_traffic_count.trace_add("write", _on_flow_stats_toggle)
+        self.var_auto_traffic.trace_add("write", _on_flow_stats_toggle)
+        _on_flow_stats_toggle()  # 初始同步
+
+        # 轨迹输出设置（第二行，仅在自动流量统计勾选时可用）
+        output_row2 = tk.Frame(output_section, bg=C.CARD)
+        output_row2.pack(fill=tk.X, padx=10, pady=(0, 4))
+
+        self.cb_export_traj_img = tk.Checkbutton(output_row2, text="🖼 输出分类轨迹图",
+            variable=self.var_export_trajectory_img,
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
+        self.cb_export_traj_img.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.cb_export_traj_data = tk.Checkbutton(output_row2, text="📋 输出轨迹坐标数据",
+            variable=self.var_export_trajectory_data,
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
+        self.cb_export_traj_data.pack(side=tk.LEFT)
+
+        # 绑定：自动流量统计勾选状态联动轨迹输出复选框
+        def _on_auto_traffic_toggle(*_args):
+            enabled = self.var_auto_traffic.get()
+            state = "normal" if enabled else "disabled"
+            self.cb_export_traj_img.config(state=state)
+            self.cb_export_traj_data.config(state=state)
+        self.var_auto_traffic.trace_add("write", _on_auto_traffic_toggle)
+        # 初始状态同步
+        _on_auto_traffic_toggle()
+
+        # ── 底部固定：操作按钮组 (2×2) 必须先于 canvas pack，否则被 expand=True 挤出视图 ──
+        bottom_frame = tk.Frame(parent, bg=C.PANEL)
+        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=0, pady=0)
+
+        tk.Frame(bottom_frame, bg=C.BORDER, height=1).pack(fill=tk.X, padx=10, pady=(0, 3))
+        btn_panel = tk.Frame(bottom_frame, bg=C.CARD)
+        btn_panel.pack(fill=tk.X, padx=10, pady=(5, 8))
+
+        # Row 1
+        r1 = tk.Frame(btn_panel, bg=C.CARD)
+        r1.pack(fill=tk.X, pady=(2, 1))
+
+        self.btn_select_video = tk.Button(r1, text="📹 选择视频", command=self.select_video,
+            bg=C.ACCENT, fg=C.BG, relief=tk.FLAT, padx=8, pady=6,
+            font=("Microsoft YaHei", 10, "bold"), cursor="hand2",
+            activebackground=C.ACCENT_HOVER, activeforeground=C.BG)
+        self.btn_select_video.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+        self.btn_preview = tk.Button(r1, text="🔍 视频预览", command=self.toggle_play,
+            bg=C.BORDER_LIGHT, fg=C.TEXT, relief=tk.FLAT, padx=8, pady=6,
+            font=("Microsoft YaHei", 10, "bold"), cursor="hand2",
+            activebackground=C.BLUE, activeforeground=C.BG)
+        self.btn_preview.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+        # Row 2
+        r2 = tk.Frame(btn_panel, bg=C.CARD)
+        r2.pack(fill=tk.X, pady=(1, 2))
+
+        self.btn_start = tk.Button(r2, text="▶ 开始检测", command=self.start_detection,
+            bg=C.GREEN, fg=C.BG, relief=tk.FLAT, padx=8, pady=6,
+            font=("Microsoft YaHei", 10, "bold"), cursor="hand2",
+            activebackground="#0ef0a0", activeforeground=C.BG)
+        self.btn_start.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+        self.btn_stop = tk.Button(r2, text="⏹ 停止检测", command=self.stop_detection,
+            bg=C.BTN_DISABLED, fg=C.BTN_DISABLED_TEXT, relief=tk.FLAT, padx=8, pady=6,
+            font=("Microsoft YaHei", 10, "bold"), cursor="hand2", state="disabled",
+            activebackground=C.RED, activeforeground=C.BG)
+        self.btn_stop.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+        # canvas 扩展（必须在 bottom_frame 之后 pack，否则 expand=True 会将空间占满）
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # ═══════════ 轨迹绘图面板 ═══════════
-        tk.Frame(parent, bg="#e0e0e0", height=1).pack(fill=tk.X, padx=10, pady=(5, 0))
+    # ═════════════════════════════════════════
+    # 文件导航浏览器
+    # ═════════════════════════════════════════
 
-        traj_panel = tk.Frame(parent, bg="#ffffff")
-        traj_panel.pack(fill=tk.X, padx=10, pady=(5, 8))
+    def _create_file_browser(self, parent: tk.Frame):
+        """创建左侧文件导航面板"""
+        tk.Label(parent, text="📁 文件浏览器",
+                bg=C.PANEL, fg=C.TEXT, font=FONT_HEADER).pack(anchor=tk.W, padx=12, pady=(8, 4))
 
-        tk.Label(traj_panel, text="🗺 自动流量轨迹图",
-                bg="#ffffff", fg="#333333",
-                font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=8, pady=(6, 2))
+        # 工具栏
+        tb = tk.Frame(parent, bg=C.PANEL)
+        tb.pack(fill=tk.X, padx=8, pady=(0, 4))
+        tk.Button(tb, text="🔄", command=self._scan_file_browser,
+                  bg=C.CARD, fg=C.TEXT, relief=tk.FLAT, font=("Arial", 8),
+                  cursor="hand2", activebackground=C.ACCENT).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(tb, text="data / outputs", bg=C.PANEL, fg=C.TEXT_MUTED,
+                font=FONT_SMALL).pack(side=tk.LEFT)
 
-        self.traj_canvas = tk.Canvas(
-            traj_panel, bg="#f0f0f0", height=220, highlightthickness=1,
-            highlightbackground="#d0d0d0", cursor="cross"
-        )
-        self.traj_canvas.pack(fill=tk.X, padx=5, pady=4)
+        # Treeview
+        tree_frame = tk.Frame(parent, bg=C.PANEL)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
-        # 初始占位文字
-        self._traj_placeholder_id = self.traj_canvas.create_text(
-            180, 110, text="等待自动流量统计结果...",
-            fill="#aaaaaa", font=("Microsoft YaHei", 9),
-        )
+        self.file_tree = ttk.Treeview(tree_frame, show="tree", height=999,
+                                      selectmode="browse")
+        style = ttk.Style()
+        style.configure("Treeview", background=C.BG, foreground=C.TEXT,
+                       fieldbackground=C.BG, font=("Microsoft YaHei", 9))
+        style.configure("Treeview.Heading", background=C.CARD, foreground=C.ACCENT,
+                       font=("Microsoft YaHei", 9, "bold"))
+        style.map("Treeview", background=[("selected", C.ACCENT)],
+                 foreground=[("selected", C.BG)])
+
+        file_scroll = tk.Scrollbar(tree_frame, orient="vertical", command=self.file_tree.yview)
+        self.file_tree.configure(yscrollcommand=file_scroll.set)
+        self.file_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        file_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.file_tree.bind("<Double-1>", self._on_file_double_click)
+        self.file_tree.bind("<Button-3>", self._on_file_right_click)
+
+        # 初始占位
+        self._file_root_data = self.file_tree.insert("", tk.END, text="📂 data", tags=("folder",))
+        self._file_root_out = self.file_tree.insert("", tk.END, text="📂 outputs", tags=("folder",))
+
+        # 高亮标记
+        self._file_highlighted: str = ""
+
+    def _scan_file_browser(self, *args):
+        """扫描 data/ 和 outputs/ 目录，刷新文件树"""
+        import os, glob as _glob
+        tree = self.file_tree
+        # 清除
+        for child in tree.get_children():
+            tree.delete(child)
+
+        self._file_root_data = tree.insert("", tk.END, text="📂 data", open=True, tags=("folder",))
+        self._file_root_out = tree.insert("", tk.END, text="📂 outputs", open=True, tags=("folder",))
+
+        data_dir = PROJECT_ROOT / "data"
+        out_dir = PROJECT_ROOT / "outputs"
+
+        # 扫描 data/
+        if data_dir.exists():
+            self._scan_dir(data_dir, self._file_root_data, is_data=True)
+
+        # 扫描 outputs/
+        if out_dir.exists():
+            self._scan_dir(out_dir, self._file_root_out, is_data=False)
+
+    def _scan_dir(self, directory: Path, parent_node: str, is_data: bool):
+        """扫描目录文件添加到树节点"""
+        import os
+        tree = self.file_tree
+        exts = {".mp4", ".avi", ".mov", ".mkv", ".png", ".jpg", ".jpeg", ".csv", ".xlsx"}
+
+        files = []
+        dirs = []
+        try:
+            for entry in sorted(directory.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                if entry.is_dir() and not entry.name.startswith("."):
+                    dirs.append(entry)
+                elif entry.is_file() and entry.suffix.lower() in exts:
+                    files.append(entry)
+        except PermissionError:
+            return
+
+        # 子目录
+        for d in dirs:
+            sub_node = tree.insert(parent_node, tk.END, text=f"📁 {d.name}", tags=("folder",))
+            self._scan_dir(d, sub_node, is_data)
+
+        # 文件
+        for f in files:
+            ext = f.suffix.lower()
+            if ext in {".mp4", ".avi", ".mov", ".mkv"}:
+                icon = "🎬"
+            elif ext in {".png", ".jpg", ".jpeg"}:
+                icon = "🖼"
+            elif ext == ".csv":
+                icon = "📊"
+            elif ext == ".xlsx":
+                icon = "📋"
+            else:
+                icon = "📄"
+
+            tags = ("file",)
+            if ext in {".mp4", ".avi", ".mov", ".mkv"}:
+                tags = ("video",)
+
+            item = tree.insert(parent_node, tk.END, text=f"{icon} {f.name}",
+                              values=(str(f),), tags=tags)
+
+            # 检查是否有关联的截面线配置（periods 结构）
+            if is_data and ext in {".mp4", ".avi", ".mov", ".mkv"}:
+                full_cfg = self._load_config_yaml(f)
+                if full_cfg and "periods" in full_cfg:
+                    for period_name, period_data in full_cfg["periods"].items():
+                        st = period_data.get("start_time", "")
+                        et = period_data.get("end_time", "")
+                        time_str = f"({st} - {et})" if st and et else ""
+                        period_node = tree.insert(item, tk.END,
+                            text=f"  ⏱ {period_name} {time_str}", tags=("period",),
+                            values=(str(f), period_name))
+                        entries_d = period_data.get("entries", {})
+                        for entry_name, entry_data in entries_d.items():
+                            if isinstance(entry_data, dict):
+                                entry_node = tree.insert(period_node, tk.END,
+                                    text=f"    ├ {entry_name}", tags=("entry",),
+                                    values=(str(f), period_name, entry_name))
+                                lines = entry_data.get("lines", [])
+                                dirs = []
+                                for line in lines:
+                                    d = line.get("direction", "")
+                                    ld = line.get("line_id", "")
+                                    if d and d not in [x[0] for x in dirs]:
+                                        dirs.append((d, ld))
+                                if not dirs:
+                                    dirs.append(("(无线)", ""))
+                                for dname, lid in dirs:
+                                    tree.insert(entry_node, tk.END,
+                                        text=f"      └ {dname}", tags=("direction",),
+                                        values=(str(f), period_name, entry_name, dname, lid))
+
+            # 高亮当前视频
+            if self.video_path and f.resolve() == self.video_path.resolve():
+                tree.selection_set(item)
+                tree.see(item)
+
+    def _find_config_for_video(self, video_path: Path) -> dict[str, list[str]]:
+        """查找视频对应的截面线配置，返回 {进口道名: [转向方向列表]} (兼容旧版)"""
+        full = self._load_config_yaml(video_path)
+        if not full:
+            return {}
+        # 平面化: periods → entries → lines → directions
+        result: dict[str, list[str]] = {}
+        for period_name, period_data in full.get("periods", {}).items():
+            prefix = f"{period_name}/" if len(full.get("periods", {})) > 1 else ""
+            for entry_name, entry_data in period_data.get("entries", {}).items():
+                if isinstance(entry_data, dict):
+                    lines = entry_data.get('lines', [])
+                    dirs = []
+                    for line in lines:
+                        d = line.get('direction', '')
+                        if d and d not in dirs:
+                            dirs.append(d)
+                    key = f"{prefix}{entry_name}"
+                    result[key] = dirs if dirs else ["(无线)"]
+        return result
+
+    def _load_config_yaml(self, video_path: Path) -> dict | None:
+        """加载视频 YAML 配置（支持 periods 结构，兼容旧版 entries 结构）"""
+        config_dirs = [
+            PROJECT_ROOT / "configs" / "traffic_lines",
+            PROJECT_ROOT / "configs" / "cross_section_lines",
+        ]
+        stem = video_path.stem
+        for cfg_dir in config_dirs:
+            if cfg_dir.exists():
+                for yf in cfg_dir.iterdir():
+                    if yf.suffix in (".yaml", ".yml") and yf.stem == stem:
+                        try:
+                            import yaml
+                            with open(yf, 'r', encoding='utf-8') as fcfg:
+                                data = yaml.safe_load(fcfg) or {}
+                            # 旧版兼容：只有 entries 无 periods → 自动包装为"全时段"
+                            if "periods" not in data and "entries" in data:
+                                fps = 30.0
+                                cap = cv2.VideoCapture(str(video_path))
+                                if cap.isOpened():
+                                    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                                    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                                    cap.release()
+                                else:
+                                    total = 9999
+                                ts = int(total / max(1.0, fps)) if fps > 0 else 0
+                                m, s = divmod(ts, 60); h, m = divmod(m, 60)
+                                data = {
+                                    "video_name": data.get("video_name", video_path.name),
+                                    "periods": {
+                                        "全时段": {
+                                            "start": 0, "end": total,
+                                            "start_time": "00:00:00",
+                                            "end_time": f"{h:02d}:{m:02d}:{s:02d}",
+                                            "entries": data.get("entries", {}),
+                                        }
+                                    }
+                                }
+                            return data
+                        except Exception:
+                            pass
+        return None
+
+    def _save_config_yaml(self, video_path: Path, data: dict) -> str | None:
+        """保存 YAML 配置到 cross_section_lines/ 目录"""
+        import yaml
+        config_dir = PROJECT_ROOT / "configs" / "cross_section_lines"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = video_path.stem.replace(" ", "_").replace(".", "_")
+        config_path = config_dir / f"{safe_name}.yaml"
+        data.setdefault("video_name", video_path.name)
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        return str(config_path)
+
+    def _find_config_path(self, video_path: Path) -> Path | None:
+        """查找视频对应的 YAML 配置文件路径"""
+        config_dirs = [
+            PROJECT_ROOT / "configs" / "traffic_lines",
+            PROJECT_ROOT / "configs" / "cross_section_lines",
+        ]
+        stem = video_path.stem
+        for cfg_dir in config_dirs:
+            if cfg_dir.exists():
+                for yf in cfg_dir.iterdir():
+                    if yf.suffix in (".yaml", ".yml") and yf.stem == stem:
+                        return yf
+        return None
+
+    def _seconds_to_time_str(self, seconds: float) -> str:
+        m, s = divmod(int(seconds), 60); h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _frames_to_time_str(self, frame: int, fps: float) -> str:
+        return self._seconds_to_time_str(frame / max(1.0, fps))
+
+    def _on_file_double_click(self, event):
+        """双击文件浏览器节点"""
+        tree = self.file_tree
+        item = tree.identify_row(event.y)
+        if not item: return
+        video_path = self._find_video_for_node(item)
+        if video_path and video_path.exists():
+            self._open_video_from_browser(video_path)
+
+    def _find_video_for_node(self, item: str) -> Path | None:
+        """向上查找节点树，获取所属视频文件路径"""
+        tree = self.file_tree
+        while item:
+            values = tree.item(item, "values")
+            tags = tree.item(item, "tags")
+            if "video" in str(tags) and values:
+                return Path(values[0])
+            item = tree.parent(item)
+        return None
+
+    def _on_file_right_click(self, event):
+        """右键文件浏览器节点 —— 按节点层级分发菜单"""
+        tree = self.file_tree
+        item = tree.identify_row(event.y)
+        if not item: return
+        tree.selection_set(item)
+        tags = str(tree.item(item, "tags"))
+        values = tree.item(item, "values") or []
+        parent = tree.parent(item)
+
+        # 判断是否在 outputs 树下
+        under_outputs = self._is_under_outputs(item)
+
+        if "direction" in tags and len(values) >= 5:
+            # L4: 方向截面
+            vp, pn, en, dn, lid = values[0], values[1], values[2], values[3], values[4]
+            self._show_direction_menu(item, Path(vp), pn, en, dn, lid, event.x_root, event.y_root)
+        elif "entry" in tags and len(values) >= 3:
+            # L3: 进口道
+            vp, pn, en = values[0], values[1], values[2]
+            self._show_entry_menu(item, Path(vp), pn, en, event.x_root, event.y_root)
+        elif "period" in tags and len(values) >= 2:
+            # L2: 统计时段
+            vp, pn = values[0], values[1]
+            self._show_period_menu(item, Path(vp), pn, event.x_root, event.y_root)
+        elif "video" in tags and not under_outputs:
+            # L1: data/视频
+            vp = Path(values[0]) if values else None
+            if vp and vp.exists():
+                self._show_data_video_menu(item, vp, event.x_root, event.y_root)
+        elif under_outputs and values:
+            # L5: outputs/文件
+            fp = Path(values[0])
+            if fp.exists():
+                self._show_output_file_menu(item, fp, event.x_root, event.y_root)
+
+    def _is_under_outputs(self, item: str) -> bool:
+        """判断节点是否在 outputs 树下"""
+        tree = self.file_tree
+        while item:
+            if tree.item(item, "text") == "📂 outputs":
+                return True
+            item = tree.parent(item)
+        return False
+
+    # ═══════════ L1: data/视频右键菜单 ═══════════
+
+    def _show_data_video_menu(self, item: str, video_path: Path, x: int, y: int):
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT, font=("Microsoft YaHei", 9))
+        menu.add_command(label="🎬 打开视频", font=("Microsoft YaHei", 9, "bold"),
+                         command=lambda: self._open_video_from_browser(video_path))
+        menu.add_separator()
+        menu.add_command(label="✏ 重命名",
+                         command=lambda: self._rename_file_node(item, video_path))
+        menu.add_command(label="⏱ 添加统计时段",
+                         command=lambda: self._add_period_dialog(video_path))
+        menu.add_separator()
+        menu.add_command(label="🗑 删除视频",
+                         command=lambda: self._delete_video_node(item, video_path))
+        menu.post(x, y)
+
+    def _add_period_dialog(self, video_path: Path):
+        """弹出对话框添加统计时段"""
+        data = self._load_config_yaml(video_path) or {}
+        periods = data.get("periods", {})
+        # 生成默认名称
+        idx = 1
+        while f"时段{idx}" in periods:
+            idx += 1
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("添加统计时段")
+        dialog.configure(bg=C.CARD)
+        dialog.resizable(False, False)
+        x = self.root.winfo_x() + 200; y = self.root.winfo_y() + 200
+        dialog.geometry(f"350x200+{x}+{y}")
+
+        tk.Label(dialog, text="时段名称:", bg=C.CARD, fg=C.TEXT, font=FONT_BODY).pack(pady=(15, 2))
+        name_var = tk.StringVar(value=f"时段{idx}")
+        tk.Entry(dialog, textvariable=name_var, bg=C.SURFACE, fg=C.TEXT, font=FONT_MONO_SM,
+                 width=20, relief=tk.FLAT, insertbackground=C.ACCENT).pack(pady=2)
+
+        tk.Label(dialog, text="(起止时刻默认为视频全时刻，后续可修改)", bg=C.CARD,
+                 fg=C.TEXT_MUTED, font=FONT_TINY).pack(pady=(5, 15))
+
+        btn_f = tk.Frame(dialog, bg=C.CARD); btn_f.pack()
+        tk.Button(btn_f, text="确认", bg=C.ACCENT, fg=C.BG, relief=tk.FLAT,
+                  font=FONT_BODY, padx=15, cursor="hand2",
+                  command=lambda: self._do_add_period(dialog, video_path, name_var.get(), data)
+                  ).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_f, text="取消", bg=C.BORDER_LIGHT, fg=C.TEXT, relief=tk.FLAT,
+                  font=FONT_BODY, padx=15, cursor="hand2",
+                  command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _do_add_period(self, dialog, video_path: Path, name: str, data: dict):
+        name = name.strip()
+        if not name:
+            messagebox.showwarning("警告", "名称不能为空"); return
+        periods = data.setdefault("periods", {})
+        if name in periods:
+            messagebox.showwarning("警告", "时段名称已存在"); return
+        fps = self.fps if hasattr(self, 'fps') and self.fps > 0 else 30.0
+        total = self.total_frames if hasattr(self, 'total_frames') and self.total_frames > 0 else 9999
+        periods[name] = {
+            "start": 0, "end": total,
+            "start_time": "00:00:00",
+            "end_time": self._frames_to_time_str(total, fps),
+            "entries": {}
+        }
+        self._save_config_yaml(video_path, data)
+        dialog.destroy()
+        self._scan_file_browser()
+        self._log(f"已添加统计时段: {name}")
+
+    def _rename_file_node(self, item: str, path: Path):
+        new_name = simpledialog.askstring("重命名", "新文件名:", initialvalue=path.stem)
+        if not new_name: return
+        new_path = path.with_name(new_name + path.suffix)
+        if new_path.exists():
+            messagebox.showwarning("警告", "目标文件已存在"); return
+        try:
+            path.rename(new_path)
+            # 同步重命名 YAML 配置
+            cfg_path = self._find_config_path(path)
+            if cfg_path:
+                new_cfg = cfg_path.with_name(new_path.stem.replace(" ", "_").replace(".", "_") + ".yaml")
+                if not new_cfg.exists():
+                    cfg_path.rename(new_cfg)
+            self._scan_file_browser()
+            self._log(f"已重命名: {path.name} → {new_path.name}")
+        except Exception as e:
+            messagebox.showerror("错误", f"重命名失败: {e}")
+
+    def _delete_video_node(self, item: str, video_path: Path):
+        if not messagebox.askyesno("确认删除", f"确定要删除视频文件？\n{video_path.name}\n\n此操作不可恢复！"):
+            return
+        try:
+            # 删除 YAML 配置
+            for cfg in [self._find_config_path(video_path)]:
+                if cfg and cfg.exists():
+                    cfg.unlink()
+            video_path.unlink()
+            if self.video_path and self.video_path == video_path:
+                self.video_path = None
+            self._scan_file_browser()
+            self._log(f"已删除视频: {video_path.name}")
+        except Exception as e:
+            messagebox.showerror("错误", f"删除失败: {e}")
+
+    # ═══════════ L2: 统计时段右键菜单 ═══════════
+
+    def _show_period_menu(self, item: str, video_path: Path, period_name: str, x: int, y: int):
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT, font=("Microsoft YaHei", 9))
+        menu.add_command(label="✏ 重命名",
+                         command=lambda: self._rename_period(item, video_path, period_name))
+        menu.add_command(label="🕐 设置起止时刻",
+                         command=lambda: self._set_period_range_dialog(video_path, period_name))
+        menu.add_separator()
+        menu.add_command(label="➕ 添加进口道",
+                         command=lambda: self._add_entry_dialog(video_path, period_name))
+        menu.add_command(label="🧹 清空进口道",
+                         command=lambda: self._clear_entries(video_path, period_name))
+        menu.add_separator()
+        menu.add_command(label="🗑 删除时段",
+                         command=lambda: self._delete_period(item, video_path, period_name))
+        menu.post(x, y)
+
+    def _rename_period(self, item: str, video_path: Path, old_name: str):
+        new_name = simpledialog.askstring("重命名时段", "新名称:", initialvalue=old_name)
+        if not new_name or new_name == old_name: return
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        periods = data.get("periods", {})
+        if new_name in periods:
+            messagebox.showwarning("警告", "时段名称已存在"); return
+        periods[new_name] = periods.pop(old_name)
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"时段已重命名: {old_name} → {new_name}")
+
+    def _set_period_range_dialog(self, video_path: Path, period_name: str):
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        pd = data["periods"].get(period_name)
+        if not pd: return
+        fps = self.fps if self.fps > 0 else 30.0
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"设置时段范围 - {period_name}")
+        dialog.configure(bg=C.CARD); dialog.resizable(False, False)
+        x = self.root.winfo_x() + 200; y = self.root.winfo_y() + 150
+        dialog.geometry(f"400x200+{x}+{y}")
+
+        row1 = tk.Frame(dialog, bg=C.CARD); row1.pack(pady=(15, 5))
+        tk.Label(row1, text="起始帧:", bg=C.CARD, fg=C.TEXT, font=FONT_BODY, width=8).pack(side=tk.LEFT)
+        start_var = tk.IntVar(value=pd.get("start", 0))
+        tk.Entry(row1, textvariable=start_var, bg=C.SURFACE, fg=C.TEXT, font=FONT_MONO_SM,
+                 width=10, relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
+        tk.Label(row1, text="起始时间:", bg=C.CARD, fg=C.TEXT_MUTED, font=FONT_SMALL).pack(side=tk.LEFT)
+        st_label = tk.Label(row1, text=self._frames_to_time_str(pd.get("start", 0), fps),
+                            bg=C.CARD, fg=C.ACCENT, font=FONT_SMALL)
+        st_label.pack(side=tk.LEFT, padx=5)
+
+        row2 = tk.Frame(dialog, bg=C.CARD); row2.pack(pady=5)
+        tk.Label(row2, text="结束帧:", bg=C.CARD, fg=C.TEXT, font=FONT_BODY, width=8).pack(side=tk.LEFT)
+        end_var = tk.IntVar(value=pd.get("end", self.total_frames))
+        tk.Entry(row2, textvariable=end_var, bg=C.SURFACE, fg=C.TEXT, font=FONT_MONO_SM,
+                 width=10, relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
+        tk.Label(row2, text="结束时间:", bg=C.CARD, fg=C.TEXT_MUTED, font=FONT_SMALL).pack(side=tk.LEFT)
+        et_label = tk.Label(row2, text=self._frames_to_time_str(pd.get("end", self.total_frames), fps),
+                            bg=C.CARD, fg=C.ACCENT, font=FONT_SMALL)
+        et_label.pack(side=tk.LEFT, padx=5)
+
+        def _update_labels(*_):
+            st_label.config(text=self._frames_to_time_str(start_var.get(), fps))
+            et_label.config(text=self._frames_to_time_str(end_var.get(), fps))
+        start_var.trace_add("write", _update_labels)
+        end_var.trace_add("write", _update_labels)
+
+        btn_f = tk.Frame(dialog, bg=C.CARD); btn_f.pack(pady=(10, 15))
+        tk.Button(btn_f, text="确认", bg=C.ACCENT, fg=C.BG, relief=tk.FLAT,
+                  font=FONT_BODY, padx=15, cursor="hand2",
+                  command=lambda: self._do_set_period_range(dialog, video_path, period_name,
+                      start_var.get(), end_var.get(), fps)
+                  ).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_f, text="取消", bg=C.BORDER_LIGHT, fg=C.TEXT, relief=tk.FLAT,
+                  font=FONT_BODY, padx=15, cursor="hand2",
+                  command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _do_set_period_range(self, dialog, video_path, period_name, start, end, fps):
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        pd = data["periods"][period_name]
+        pd["start"] = start
+        pd["end"] = end
+        pd["start_time"] = self._frames_to_time_str(start, fps)
+        pd["end_time"] = self._frames_to_time_str(end, fps)
+        self._save_config_yaml(video_path, data)
+        dialog.destroy()
+        self._scan_file_browser()
+        self._log(f"时段 {period_name} 范围已更新: 帧 {start}-{end}")
+
+    def _delete_period(self, item: str, video_path: Path, period_name: str):
+        if not messagebox.askyesno("确认删除", f"确定要删除时段 '{period_name}'？"):
+            return
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        del data["periods"][period_name]
+        if not data["periods"]:
+            data["periods"] = {"全时段": {"start": 0, "end": self.total_frames,
+                "start_time": "00:00:00", "end_time": self._frames_to_time_str(self.total_frames, 30),
+                "entries": {}}}
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"已删除时段: {period_name}")
+
+    # ═══════════ L3: 进口道右键菜单 ═══════════
+
+    def _show_entry_menu(self, item: str, video_path: Path, period_name: str,
+                          entry_name: str, x: int, y: int):
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT, font=("Microsoft YaHei", 9))
+        menu.add_command(label="✏ 重命名",
+                         command=lambda: self._rename_entry(item, video_path, period_name, entry_name))
+        menu.add_separator()
+        for label, dir_name in [("➕ 添加直行", "直行"), ("➕ 添加左转", "左转"),
+                                 ("➕ 添加右转", "右转"), ("➕ 添加掉头", "掉头")]:
+            menu.add_command(label=label,
+                command=lambda vp=video_path, pn=period_name, en=entry_name, dn=dir_name:
+                    self._add_direction_and_draw(vp, pn, en, dn))
+        menu.add_separator()
+        menu.add_command(label="🗑 删除进口道",
+                         command=lambda: self._delete_entry(item, video_path, period_name, entry_name))
+        menu.post(x, y)
+
+    def _add_entry_dialog(self, video_path: Path, period_name: str):
+        name = simpledialog.askstring("添加进口道", "进口道名称:")
+        if not name: return
+        data = self._load_config_yaml(video_path) or {"periods": {}}
+        periods = data.setdefault("periods", {})
+        if period_name not in periods:
+            periods[period_name] = {"start": 0, "end": self.total_frames or 9999,
+                "start_time": "00:00:00", "end_time": self._frames_to_time_str(self.total_frames or 9999, 30),
+                "entries": {}}
+        entries = periods[period_name].setdefault("entries", {})
+        if name in entries:
+            messagebox.showwarning("警告", "进口道名称已存在"); return
+        entries[name] = {"lines": []}
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"已添加进口道: {name} (时段: {period_name})")
+
+    def _clear_entries(self, video_path: Path, period_name: str):
+        if not messagebox.askyesno("确认", f"确定要清空时段 '{period_name}' 下所有进口道？"):
+            return
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        data["periods"][period_name]["entries"] = {}
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"已清空时段 {period_name} 的所有进口道")
+
+    def _rename_entry(self, item, video_path, period_name, old_name):
+        new_name = simpledialog.askstring("重命名进口道", "新名称:", initialvalue=old_name)
+        if not new_name or new_name == old_name: return
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        entries = data["periods"][period_name]["entries"]
+        if new_name in entries:
+            messagebox.showwarning("警告", "进口道名称已存在"); return
+        entries[new_name] = entries.pop(old_name)
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"进口道已重命名: {old_name} → {new_name}")
+
+    def _delete_entry(self, item, video_path, period_name, entry_name):
+        if not messagebox.askyesno("确认删除", f"确定要删除进口道 '{entry_name}'？"):
+            return
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        del data["periods"][period_name]["entries"][entry_name]
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"已删除进口道: {entry_name}")
+
+    # ═══════════ L4: 方向截面右键菜单 ═══════════
+
+    def _show_direction_menu(self, item: str, video_path: Path, period_name: str,
+                              entry_name: str, dir_name: str, line_id: str, x: int, y: int):
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT, font=("Microsoft YaHei", 9))
+        menu.add_command(label="✏ 修改截面",
+                         command=lambda: self._modify_direction(
+                             video_path, period_name, entry_name, dir_name, line_id))
+        menu.add_separator()
+        menu.add_command(label="🗑 删除截面",
+                         command=lambda: self._delete_direction(
+                             video_path, period_name, entry_name, line_id))
+        menu.post(x, y)
+
+    # ═══════════ L5: outputs 文件右键菜单 ═══════════
+
+    def _show_output_file_menu(self, item: str, file_path: Path, x: int, y: int):
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT, font=("Microsoft YaHei", 9))
+        menu.add_command(label="✏ 重命名",
+                         command=lambda: self._rename_file_node(item, file_path))
+        menu.add_separator()
+        menu.add_command(label="🗑 删除",
+                         command=lambda: self._delete_output_file(item, file_path))
+        menu.post(x, y)
+
+    def _delete_output_file(self, item: str, file_path: Path):
+        if not messagebox.askyesno("确认删除", f"确定要删除文件？\n{file_path.name}"):
+            return
+        try:
+            file_path.unlink()
+            self._scan_file_browser()
+            self._log(f"已删除: {file_path.name}")
+        except Exception as e:
+            messagebox.showerror("错误", f"删除失败: {e}")
+
+    # ═══════════ 画线与编辑模式 ═══════════
+
+    def _add_direction_and_draw(self, video_path: Path, period_name: str,
+                                 entry_name: str, direction: str):
+        """添加转向方向 → 进入画线模式"""
+        if not self.video_path or self.video_path.resolve() != video_path.resolve():
+            self._open_video_from_browser(video_path)
+            self.root.after(300, lambda: self._enter_draw_mode(
+                video_path, period_name, entry_name, direction))
+        else:
+            self._enter_draw_mode(video_path, period_name, entry_name, direction)
+
+    def _enter_draw_mode(self, video_path: Path, period_name: str,
+                          entry_name: str, direction: str):
+        """进入画线模式：单击起点→移动预览→单击终点→Enter/双击确认"""
+        # 停止播放，显示当前帧
+        self._pause()
+        self._send_command(PlayerCommand.STOP)
+        # 清理旧的绑定
+        self._cancel_draw_mode()
+
+        self._draw_state = {
+            "video_path": str(video_path), "period_name": period_name,
+            "entry_name": entry_name, "direction": direction,
+            "x1": None, "y1": None, "x2": None, "y2": None,
+            "phase": "start",  # start → draw → confirm
+        }
+
+        # 显示提示
+        if not hasattr(self, 'lbl_draw_hint') or not self.lbl_draw_hint:
+            self.lbl_draw_hint = tk.Label(
+                self.root, text="", bg=C.ACCENT, fg=C.BG,
+                font=("Microsoft YaHei", 10), padx=10, pady=4
+            )
+        self.lbl_draw_hint.config(
+            text=f"画线: {entry_name}→{direction} | 单击起点 → 移动 → 单击终点 | Enter确认 / Esc取消")
+        self.lbl_draw_hint.place(relx=0.5, y=10, anchor="n")
+
+        self.video_label.bind("<Button-1>", self._on_draw_canvas_click)
+        self.video_label.bind("<Motion>", self._on_draw_canvas_move)
+        self.root.bind("<Return>", self._on_draw_confirm)
+        self.root.bind("<Double-1>", self._on_draw_confirm)
+        self.root.bind("<Escape>", self._on_draw_cancel)
+
+    def _cancel_draw_mode(self):
+        """取消画线/编辑模式，恢复绑定"""
+        self.video_label.unbind("<Button-1>")
+        self.video_label.unbind("<Motion>")
+        self.root.unbind("<Return>")
+        self.root.unbind("<Double-1>")
+        self.root.unbind("<Escape>")
+        if hasattr(self, 'lbl_draw_hint') and self.lbl_draw_hint:
+            self.lbl_draw_hint.place_forget()
+        self._draw_state = None
+        # 恢复帧显示
+        self._seek_absolute(self.current_frame)
+
+    def _on_draw_canvas_click(self, event):
+        ds = getattr(self, '_draw_state', None)
+        if not ds: return
+        # 转换鼠标坐标到视频坐标
+        vx, vy = self._mouse_to_video_coords(event.x, event.y)
+        if vx < 0 or vy < 0: return
+        if ds["phase"] == "start":
+            ds["x1"], ds["y1"] = vx, vy
+            ds["phase"] = "draw"
+            self.lbl_draw_hint.config(text=f"画线: {ds['entry_name']}→{ds['direction']} | 起点已定，单击设置终点 | Enter确认 / Esc取消")
+        elif ds["phase"] == "draw":
+            ds["x2"], ds["y2"] = vx, vy
+            ds["phase"] = "confirm"
+            self.lbl_draw_hint.config(text=f"画线: {ds['entry_name']}→{ds['direction']} | 终点已定 | Enter确认 / Esc取消 / 单击继续画")
+            self._seek_absolute(self.current_frame)  # 刷新显示
+
+    def _on_draw_canvas_move(self, event):
+        ds = getattr(self, '_draw_state', None)
+        if not ds or ds["phase"] != "draw": return
+        vx, vy = self._mouse_to_video_coords(event.x, event.y)
+        if vx < 0 or vy < 0: return
+        # 实时预览：在 video_label 上画临时线
+        frame = self._render_current_frame_copy()
+        if frame is not None:
+            import cv2
+            x1, y1 = self._video_to_label_coords(ds["x1"], ds["y1"])
+            x2, y2 = self._video_to_label_coords(vx, vy)
+            cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = ImageTk.PhotoImage(Image.fromarray(rgb))
+            self.video_label.configure(image=img)
+            self.video_label._preview_image = img
+
+    def _mouse_to_video_coords(self, label_x: int, label_y: int) -> tuple:
+        """Label 坐标 → 原始视频坐标"""
+        if not hasattr(self, '_video_width') or not self._video_width:
+            return (-1, -1)
+        label_w = self.video_label.winfo_width() or 1
+        label_h = self.video_label.winfo_height() or 1
+        ratio = min(label_w / self._video_width, label_h / self._video_height)
+        disp_w = int(self._video_width * ratio)
+        disp_h = int(self._video_height * ratio)
+        offset_x = (label_w - disp_w) // 2
+        offset_y = (label_h - disp_h) // 2
+        vx = int((label_x - offset_x) / ratio)
+        vy = int((label_y - offset_y) / ratio)
+        return (vx, vy)
+
+    def _video_to_label_coords(self, vx: int, vy: int) -> tuple:
+        """原始视频坐标 → Label 坐标"""
+        label_w = self.video_label.winfo_width() or 1
+        label_h = self.video_label.winfo_height() or 1
+        ratio = min(label_w / self._video_width, label_h / self._video_height)
+        disp_w = int(self._video_width * ratio)
+        disp_h = int(self._video_height * ratio)
+        offset_x = (label_w - disp_w) // 2
+        offset_y = (label_h - disp_h) // 2
+        return (int(offset_x + vx * ratio), int(offset_y + vy * ratio))
+
+    def _render_current_frame_copy(self) -> np.ndarray | None:
+        """获取当前帧的副本用于预览"""
+        import cv2
+        if self.current_frame < 0 or not self.video_path:
+            cap = cv2.VideoCapture(str(self.video_path))
+            if cap.isOpened():
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, self.current_frame))
+                ret, frame = cap.read()
+                cap.release()
+                if ret: return frame
+            return None
+        frame_data = self.frame_buffer.get_cached(self.current_frame)
+        if frame_data is not None:
+            return frame_data.copy()
+        return None
+
+    def _on_draw_confirm(self, event=None):
+        ds = getattr(self, '_draw_state', None)
+        if not ds or "x2" not in ds or ds["x2"] is None: return
+        self._save_drawn_line(ds)
+        self._cancel_draw_mode()
+
+    def _on_draw_cancel(self, event=None):
+        self._cancel_draw_mode()
+        self._log("画线已取消")
+
+    def _save_drawn_line(self, ds: dict):
+        """将画的线保存到 YAML"""
+        import uuid
+        video_path = Path(ds["video_path"])
+        data = self._load_config_yaml(video_path) or {"periods": {}}
+        periods = data.setdefault("periods", {})
+        pd = periods.setdefault(ds["period_name"], {
+            "start": 0, "end": self.total_frames,
+            "start_time": "00:00:00",
+            "end_time": self._frames_to_time_str(self.total_frames, 30),
+            "entries": {}
+        })
+        entries = pd.setdefault("entries", {})
+        entry = entries.setdefault(ds["entry_name"], {"lines": []})
+        new_line = {
+            "line_id": f"line_{uuid.uuid4().hex[:8]}",
+            "entry_name": ds["entry_name"],
+            "direction": ds["direction"],
+            "x1": ds["x1"], "y1": ds["y1"],
+            "x2": ds["x2"], "y2": ds["y2"],
+            "is_drawn": True,
+        }
+        entry["lines"].append(new_line)
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"已保存截面线: {ds['entry_name']}→{ds['direction']} ({ds['x1']},{ds['y1']})→({ds['x2']},{ds['y2']})")
+
+    def _delete_direction(self, video_path: Path, period_name: str,
+                           entry_name: str, line_id: str):
+        """从 YAML 删除指定截面线"""
+        if not line_id: return
+        if not messagebox.askyesno("确认删除", f"确定要删除截面线？\n{entry_name} → {line_id}"):
+            return
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        lines = data["periods"][period_name]["entries"][entry_name].get("lines", [])
+        lines[:] = [l for l in lines if l.get("line_id") != line_id]
+        self._save_config_yaml(video_path, data)
+        self._scan_file_browser()
+        self._log(f"已删除截面线: {line_id}")
+
+    def _modify_direction(self, video_path: Path, period_name: str,
+                            entry_name: str, dir_name: str, line_id: str):
+        """进入截面修改模式：高亮截面线，可拖拽端点"""
+        if not self.video_path or self.video_path.resolve() != video_path.resolve():
+            self._open_video_from_browser(video_path)
+            self.root.after(300, lambda: self._enter_edit_mode(
+                video_path, period_name, entry_name, dir_name, line_id))
+        else:
+            self._enter_edit_mode(video_path, period_name, entry_name, dir_name, line_id)
+
+    def _enter_edit_mode(self, video_path: Path, period_name: str,
+                           entry_name: str, dir_name: str, line_id: str):
+        """进入编辑模式"""
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        # 查找 lines
+        lines = data["periods"][period_name]["entries"][entry_name].get("lines", [])
+        target = None
+        for l in lines:
+            if l.get("line_id") == line_id:
+                target = l
+                break
+        if not target:
+            self._log("未找到截面线"); return
+
+        self._cancel_draw_mode()
+        self._edit_state = {
+            "video_path": str(video_path), "period_name": period_name,
+            "entry_name": entry_name, "line_id": line_id,
+            "x1": target["x1"], "y1": target["y1"],
+            "x2": target["x2"], "y2": target["y2"],
+            "dragging": None,  # "start" or "end"
+        }
+
+        self.lbl_draw_hint.config(
+            text=f"编辑截面线: {entry_name}→{dir_name} | 拖拽端点修改 | 点击空白/Enter保存 | Esc取消")
+        self.lbl_draw_hint.place(relx=0.5, y=10, anchor="n")
+
+        self.video_label.bind("<Button-1>", self._on_edit_click)
+        self.video_label.bind("<B1-Motion>", self._on_edit_drag)
+        self.video_label.bind("<ButtonRelease-1>", self._on_edit_release)
+        self.root.bind("<Return>", self._on_edit_confirm)
+        self.root.bind("<Escape>", self._on_edit_cancel)
+
+        # 刷新显示高亮的线
+        self._seek_absolute(self.current_frame)
+
+    def _on_edit_click(self, event):
+        es = getattr(self, '_edit_state', None)
+        if not es: return
+        vx, vy = self._mouse_to_video_coords(event.x, event.y)
+        if vx < 0 or vy < 0:
+            # 点击了视频外部 → 确认保存
+            self._on_edit_confirm()
+            return
+        # 判断是否点中了端点（阈值10像素）
+        d1 = ((vx - es["x1"])**2 + (vy - es["y1"])**2)**0.5
+        d2 = ((vx - es["x2"])**2 + (vy - es["y2"])**2)**0.5
+        if d1 < 15:
+            es["dragging"] = "start"
+        elif d2 < 15:
+            es["dragging"] = "end"
+        else:
+            # 点击其他位置 → 确认保存
+            self._on_edit_confirm()
+
+    def _on_edit_drag(self, event):
+        es = getattr(self, '_edit_state', None)
+        if not es or not es["dragging"]: return
+        vx, vy = self._mouse_to_video_coords(event.x, event.y)
+        if vx < 0 or vy < 0: return
+        if es["dragging"] == "start":
+            es["x1"], es["y1"] = vx, vy
+        else:
+            es["x2"], es["y2"] = vx, vy
+        # 实时刷新
+        self._seek_absolute(self.current_frame)
+
+    def _on_edit_release(self, event):
+        es = getattr(self, '_edit_state', None)
+        if es:
+            es["dragging"] = None
+
+    def _on_edit_confirm(self, event=None):
+        es = getattr(self, '_edit_state', None)
+        if not es: return
+        # 保存到 YAML
+        data = self._load_config_yaml(Path(es["video_path"]))
+        if data:
+            lines = data["periods"][es["period_name"]]["entries"][es["entry_name"]].get("lines", [])
+            for l in lines:
+                if l.get("line_id") == es["line_id"]:
+                    l["x1"] = es["x1"]; l["y1"] = es["y1"]
+                    l["x2"] = es["x2"]; l["y2"] = es["y2"]
+                    break
+            self._save_config_yaml(Path(es["video_path"]), data)
+            self._log(f"截面线已更新: {es['entry_name']}")
+        self._cancel_edit_mode()
+
+    def _on_edit_cancel(self, event=None):
+        self._cancel_edit_mode()
+        self._log("截面线修改已取消")
+
+    def _cancel_edit_mode(self):
+        self.video_label.unbind("<Button-1>")
+        self.video_label.unbind("<B1-Motion>")
+        self.video_label.unbind("<ButtonRelease-1>")
+        self.root.unbind("<Return>")
+        self.root.unbind("<Escape>")
+        if hasattr(self, 'lbl_draw_hint') and self.lbl_draw_hint:
+            self.lbl_draw_hint.place_forget()
+        self._edit_state = None
+        self._seek_absolute(self.current_frame)
+        """从文件浏览器打开视频"""
+        if not path.exists():
+            self._log(f"文件不存在: {path}")
+            return
+        self._stop_playback()
+        self.video_path = path
+        self._log(f"打开视频: {path.name}")
+        self._load_video()
+
+    def _load_browser_config(self, video_path: Path):
+        """加载浏览器选中视频的截面线配置"""
+        lines = load_cs_lines_config(video_path, PROJECT_ROOT)
+        if lines:
+            self.count_lines = lines
+            self._refresh_tree()
+            self._log(f"已加载 {len(lines)} 条截面线配置")
+        else:
+            self._log("未找到该视频的截面线配置")
+
+    def _stop_playback(self):
+        """停止播放"""
+        self._pause()
+        self._send_command(PlayerCommand.STOP)
+        self.frame_buffer.clear()
 
     # ═════════════════════════════════════════
     # 核心播放控制逻辑（线程安全）
@@ -1569,7 +2483,7 @@ class UAVDetectionUI:
             # 播放前确保从有效位置开始
             if self.current_frame < self.start_frame or self.current_frame >= self.end_frame:
                 self._seek_absolute(self.start_frame)
-            self.play_btn.config(text="❚❚", bg="#4caf50")
+            self.play_btn.config(text="❚❚", bg=C.GREEN, fg=C.BG)
             self._send_command(PlayerCommand.PLAY)
             self._log("播放视频...")
             self._start_display_loop()
@@ -1593,7 +2507,9 @@ class UAVDetectionUI:
             self.video_path,
             self.frame_buffer,
             self.command_queue,
-            self.fps
+            self.fps,
+            start_frame=self.start_frame,
+            end_frame=self.end_frame,
         )
         self.player_thread.start()
         
@@ -1604,13 +2520,19 @@ class UAVDetectionUI:
         self.timeline.configure(
             min_val=0,
             max_val=max(1, self.total_frames - 1),
-            start_value=0,
-            end_value=self.total_frames - 1
+            start_value=self.start_frame,
+            end_value=self.end_frame,
         )
         
         self.is_playing = True
-        self.play_btn.config(text="❚❚", bg="#4caf50")
+        self.play_btn.config(text="❚❚", bg=C.GREEN, fg=C.BG)
         self._send_command(PlayerCommand.PLAY)
+        # 同步当前倍速到新线程
+        try:
+            cur_speed = float(self.speed_var.get().replace("x", ""))
+            self._send_command(PlayerCommand.SPEED, cur_speed)
+        except ValueError:
+            pass
         self._start_display_loop()
 
     def _start_display_loop(self):
@@ -1620,6 +2542,16 @@ class UAVDetectionUI:
     def _render_ui_frame(self, frame: np.ndarray) -> ImageTk.PhotoImage:
         """将原始帧绘制截面线后，缩放并转为 PhotoImage"""
         annotated = self._draw_lines_on_frame(frame)
+
+        # 编辑模式：高亮正在修改的截面线 + 拖拽手柄
+        es = getattr(self, '_edit_state', None)
+        if es and es.get("x1"):
+            cv2.line(annotated, (es["x1"], es["y1"]), (es["x2"], es["y2"]), (0, 255, 255), 3)
+            cv2.circle(annotated, (es["x1"], es["y1"]), 10, (0, 255, 255), -1)
+            cv2.circle(annotated, (es["x2"], es["y2"]), 10, (0, 0, 255), -1)
+            cv2.circle(annotated, (es["x1"], es["y1"]), 12, (0, 200, 255), 2)
+            cv2.circle(annotated, (es["x2"], es["y2"]), 12, (0, 0, 200), 2)
+
         h, w = annotated.shape[:2]
         display_size = (920, 540)
         ratio = min(display_size[0] / w, display_size[1] / h)
@@ -1662,8 +2594,10 @@ class UAVDetectionUI:
                 self._pause()
                 return
 
-        # 继续循环（约30fps检查）
-        self.play_timer = self.root.after(33, self._display_frame)
+        # 根据当前播放倍数动态调整刷新间隔
+        speed = getattr(self.player_thread, '_speed', 1.0) if self.player_thread else 1.0
+        delay = max(8, int(1000 / max(1.0, self.fps * speed)))
+        self.play_timer = self.root.after(delay, self._display_frame)
 
     def _display_frame_image(self, frame_num: int, frame: np.ndarray):
         """显示指定的帧图像"""
@@ -1680,21 +2614,24 @@ class UAVDetectionUI:
         if self.play_timer:
             self.root.after_cancel(self.play_timer)
             self.play_timer = None
-        self.play_btn.config(text="▶", bg="#4a90d9")
+        self.play_btn.config(text="▶", bg=C.ACCENT, fg=C.BG)
 
     def stop_playback(self):
-        """停止播放并回到起始位置"""
+        """停止播放并回到起帧位置"""
         self._pause()
-        self._send_command(PlayerCommand.STOP)
-        self.current_frame = 0
-        self.timeline.set_playhead(0)
+        self.frame_buffer.clear()  # 清除残留帧，避免重播时从旧位置开始
+        self._send_command(PlayerCommand.STOP)  # STOP 包含 seek 到 start_frame
+        self.current_frame = self.start_frame
+        self.timeline.set_playhead(self.start_frame)
         self._update_frame_info()
 
     def _seek_absolute(self, frame_num: int):
-        """绝对跳转"""
+        """绝对跳转（限制在起终点范围内）"""
         if not self.player_thread:
             return
+        # 先限制在视频总帧数内，再限制在起终点范围内
         frame_num = max(0, min(frame_num, self.total_frames - 1))
+        frame_num = max(self.start_frame, min(frame_num, self.end_frame))
         self._send_command(PlayerCommand.SEEK, frame_num)
         # 立即更新UI显示
         self.current_frame = frame_num
@@ -1741,6 +2678,10 @@ class UAVDetectionUI:
         """时间轴变化回调"""
         if action == "range":
             self.start_frame, self.end_frame = args
+            # 同步到播放线程（线程内部有独立副本，需实时更新）
+            if self.player_thread and self.player_thread.is_alive():
+                self.player_thread._start_frame = self.start_frame
+                self.player_thread._end_frame = self.end_frame
             if seek_frame:
                 # 根据最近拖动的手柄跳转
                 if hasattr(self, '_last_dragged_handle') and self._last_dragged_handle == "end":
@@ -1800,29 +2741,29 @@ class UAVDetectionUI:
             self.root.after_cancel(self.play_timer)
             self.play_timer = None
 
+        # 先获取视频总帧数，确定起终点范围（按新视频长度重置）
+        cap = cv2.VideoCapture(str(self.video_path))
+        if cap.isOpened():
+            self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            self._video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self._video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+        else:
+            self._log("错误: 无法打开视频文件")
+            return
+        self.start_frame = 0
+        self.end_frame = max(0, self.total_frames - 1)
+
         # 显示第一帧
         self._show_first_frame()
         
         self._pause()
         self.frame_buffer.clear()
 
-        # 启动新线程
+        # 启动新线程（此时 start/end 已经是新视频的正确范围）
         self._start_player()
         self._pause()  # 加载后暂停，等待用户操作
-
-        # 同步时间范围变量（timeline.configure 不会触发回调）
-        self.start_frame = 0
-        self.end_frame = max(0, self.total_frames - 1)
-
-        # 获取视频分辨率
-        cap = cv2.VideoCapture(str(self.video_path))
-        if cap.isOpened():
-            self._video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            self._video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            cap.release()
-        else:
-            self._video_width = 0
-            self._video_height = 0
 
         self._log(f"视频已加载: {self.video_path.name} ({self._video_width}×{self._video_height})")
         self._log(f"总帧数: {self.total_frames}")
@@ -1845,6 +2786,7 @@ class UAVDetectionUI:
             self._entry_counter = 0
             self.var_traffic_count.set(False)
 
+        self._scan_file_browser()
 
     def _show_first_frame(self):
         """显示视频第一帧"""
@@ -1880,10 +2822,10 @@ class UAVDetectionUI:
         self.is_detecting = True
         self._pause()
 
-        self.btn_start.config(state="disabled", bg="#aaaaaa")
-        self.btn_stop.config(state="normal", bg="#f44336", fg="#ffffff")
+        self.btn_start.config(state="disabled", bg=C.BTN_DISABLED, fg=C.BTN_DISABLED_TEXT)
+        self.btn_stop.config(state="normal", bg=C.RED, fg=C.BG)
         self.btn_preview.config(state="disabled")
-        self.btn_select_video.config(state="disabled", bg="#cccccc", fg="#888888")
+        self.btn_select_video.config(state="disabled", bg=C.BTN_DISABLED, fg=C.BTN_DISABLED_TEXT)
         pass  # 状态指示器已移除
 
         self._update_stage_label("准备中...")
@@ -1922,7 +2864,7 @@ class UAVDetectionUI:
             _count_lines = None
             if self.var_traffic_count.get():
                 _count_lines = [cl for cl in self.count_lines if cl.is_drawn]
-            _enable_tracking = bool(_count_lines)  # 只有配置截面线时才启用跟踪
+            _enable_tracking = bool(_count_lines) or self.var_auto_traffic.get()  # 截面线或自动流量统计都需跟踪
 
             self.root.after(0, self._log, f"设备: {device}")
             self.root.after(0, self._log,
@@ -1976,6 +2918,7 @@ class UAVDetectionUI:
                 enable_road_detect=self.var_enable_road_detect.get(),
                 road_model_type=self.road_model_var.get(),
                 enable_auto_traffic=self.var_auto_traffic.get(),
+                show_trajectory=self.var_show_trajectory.get(),
                 stop_event=_stop_event,
                 log_callback=lambda msg: self.root.after(0, self._log, msg),
                 progress_callback=lambda cur, total, frame, dcount, stats, tstats:
@@ -2004,8 +2947,11 @@ class UAVDetectionUI:
             duration_sec = (self.end_frame - self.start_frame) / max(1, self.fps)
             duration_str = self._format_time(duration_sec)
 
-            # 流量统计结果输出（只输出通过截面线的车辆数）
-            if traffic_stats and self.var_traffic_count.get():
+            # ── 流量统计结果输出（日志）──
+            has_cs = traffic_stats is not None and self.var_traffic_count.get()
+            has_auto_flow = auto_flows is not None and self.var_auto_traffic.get()
+
+            if has_cs:
                 self.root.after(0, self._log, "-" * 30)
                 self.root.after(0, self._log, "【截面流量统计】")
                 self.root.after(0, self._log, f"  实际检测用时: {_elapsed_str}")
@@ -2015,32 +2961,51 @@ class UAVDetectionUI:
                         counts = by_entry[entry_name][direction]
                         total = sum(counts.values())
                         self.root.after(0, self._log, f"  {entry_name} → {direction}: {total} 辆")
-                if self.var_export_traffic.get():
-                    excel_path = output_dir / f"traffic_{self.video_path.stem}_{int(time.time())}.xlsx"
-                    self.root.after(0, self._export_cs_excel,
-                                    traffic_stats, class_labels_zh,
-                                    self.video_path.name, duration_str, _elapsed_str, str(excel_path))
 
-            # 自动流量统计结果输出
-            if auto_flows and self.var_auto_traffic.get():
+            if has_auto_flow:
                 self.root.after(0, self._log, "-" * 30)
                 self.root.after(0, self._log, "【自动流量统计（轨迹聚类）】")
                 self.root.after(0, self._log, f"  实际检测用时: {_elapsed_str}")
+                self.root.after(0, self._log, f"  聚类结果: {len(auto_flows)} 个方向")
                 from src.auto_traffic_counter import get_flow_color
                 for flow in auto_flows:
-                    if flow.flow_id >= 0:
-                        dir_label = f"方向{flow.flow_id}"
-                    else:
-                        dir_label = "其他/噪声"
+                    dir_label = f"方向{flow.flow_id}" if flow.flow_id >= 0 else "其他/噪声"
                     self.root.after(0, self._log,
                         f"  {dir_label}: {flow.vehicle_count} 辆 "
                         f"(角度 {flow.mean_angle:.1f}°)")
                     for cid, cnt in sorted(flow.by_class.items()):
                         cname = class_labels_zh.get(cid, f"类别{cid}")
                         self.root.after(0, self._log, f"    {cname}: {cnt}")
-                # 绘制轨迹图
+
+                # 自动保存轨迹图和轨迹数据（按用户勾选）
                 if auto_traffic_counter is not None:
-                    self.root.after(0, self._draw_trajectories, auto_traffic_counter, auto_flows)
+                    stem = self.video_path.stem
+                    ts = int(time.time())
+                    if self.var_export_trajectory_img.get():
+                        img_path = output_dir / f"trajectory_flow_{stem}_{ts}.png"
+                        self.root.after(200, self._auto_save_trajectory_image,
+                                        auto_traffic_counter, auto_flows, str(img_path))
+                    if self.var_export_trajectory_data.get():
+                        data_path = output_dir / f"trajectory_data_{stem}_{ts}.csv"
+                        self.root.after(250, self._auto_save_trajectory_data,
+                                        auto_traffic_counter, auto_flows, str(data_path))
+
+            # ── 统一 Excel 导出（根据勾选组合包含不同统计方法）──
+            if self.var_export_traffic.get():
+                excel_path = output_dir / f"traffic_{self.video_path.stem}_{int(time.time())}.xlsx"
+                export_sources = {}
+                if has_cs:
+                    export_sources["cs"] = traffic_stats
+                if has_auto_flow:
+                    export_sources["auto"] = (auto_traffic_counter, auto_flows)
+                if export_sources:
+                    self.root.after(300, self._export_combined_excel,
+                                    export_sources, class_labels_zh,
+                                    self.video_path.name, duration_str, _elapsed_str, str(excel_path))
+            else:
+                self.root.after(0, self._log,
+                    f"自动流量统计: auto_flows={auto_flows is not None and len(auto_flows) if auto_flows else 'None'}, "
+                    f"var={self.var_auto_traffic.get()}, counter={auto_traffic_counter is not None}")
 
             self.root.after(0, self._log, "=" * 60)
             self.root.after(0, self._detection_complete, frame_count, str(output_video))
@@ -2053,11 +3018,14 @@ class UAVDetectionUI:
 
     def _on_detect_progress(self, frame_idx: int, total: int, frame: np.ndarray,
                             detect_count: int, stats: dict, traffic_stats: dict, model_name: str):
-        """检测进度回调（后台线程调用，用 after 调度到主线程）"""
+        """检测进度回调（后台线程调用，用 after 调度到主线程）
+        frame_idx: 已处理帧计数 (0-based，从检测开始累计)
+        total: 起终点范围内的总帧数 (end_frame - start_frame)
+        """
         self._detect_stats = dict(stats)
         self._traffic_stats = traffic_stats
-        # 进度基于已处理帧数（相对于 start_frame 的偏移）
-        processed = min(frame_idx - self.start_frame + 1, total)
+        # frame_idx 是 predict_video 内部累加的帧计数，已相对于 start_frame
+        processed = min(frame_idx + 1, total)  # +1 转为 1-based 计数
         progress = 15 + (processed / max(1, total)) * 80
         self.root.after(0, self._update_progress_bar, progress)
         if detect_count % 10 == 0:
@@ -2180,10 +3148,10 @@ class UAVDetectionUI:
             stop_event.set()
             self._stop_event = None
 
-        self.btn_start.config(state="normal", bg="#4caf50")
-        self.btn_stop.config(state="disabled", bg="#e0e0e0", fg="#888888")
-        self.btn_preview.config(state="normal", bg="#e0e0e0", fg="#333333")
-        self.btn_select_video.config(state="normal", bg="#4a90d9", fg="#ffffff")
+        self.btn_start.config(state="normal", bg=C.GREEN, fg=C.BG)
+        self.btn_stop.config(state="disabled", bg=C.BTN_DISABLED, fg=C.BTN_DISABLED_TEXT)
+        self.btn_preview.config(state="normal", bg=C.BORDER_LIGHT, fg=C.TEXT)
+        self.btn_select_video.config(state="normal", bg=C.ACCENT, fg=C.BG)
         self._update_stage_label("已停止")
 
         self._log("检测已停止")
@@ -2241,26 +3209,287 @@ class UAVDetectionUI:
             put_chinese_text(annotated, label, (tx, ty), font_size=14, color=(255, 255, 255), font_path=font_path)
         return annotated
 
-    def _draw_trajectories(self, counter, flows):
-        """在轨迹画布上绘制聚类后的轨迹（不同方向不同颜色）"""
-        if self.traj_canvas is None:
+    def _show_trajectory_popup(self, counter, flows):
+        """在悬浮窗口中绘制聚类后的轨迹（直接在主线程调用）"""
+        import traceback
+
+        try:
+            self._log(f"_show_trajectory_popup 被调用, flows={len(flows)}, counter={counter is not None}")
+
+            # 生成轨迹图
+            self._log("正在生成轨迹图...")
+            cv_image = counter.draw_flow_canvas(
+                flows,
+                canvas_width=500,
+                canvas_height=400,
+            )
+            self._log(f"轨迹图生成完成, shape={cv_image.shape}")
+
+            rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+            img = ImageTk.PhotoImage(Image.fromarray(rgb_image))
+            self._log("PhotoImage 创建成功")
+
+            # 创建悬浮窗口
+            popup = tk.Toplevel(self.root)
+            popup.title("自动流量统计 — 轨迹聚类图")
+            popup.configure(bg=C.BG)
+            popup.resizable(True, True)
+
+            # 居中定位
+            popup.update_idletasks()
+            pw, ph = 820, 530
+            try:
+                root_x = self.root.winfo_x()
+                root_y = self.root.winfo_y()
+                root_w = self.root.winfo_width()
+                root_h = self.root.winfo_height()
+                px = root_x + root_w - pw - 30
+                py = root_y + max(30, (root_h - ph) // 2)
+            except tk.TclError:
+                px, py = 100, 100
+            popup.geometry(f"{pw}x{ph}+{px}+{py}")
+
+            # 标题
+            title_frame = tk.Frame(popup, bg=C.BG)
+            title_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+            tk.Label(
+                title_frame, text=f"轨迹聚类结果 - {len(flows)} 个方向",
+                bg=C.BG, fg=C.TEXT,
+                font=("Microsoft YaHei", 12, "bold"),
+            ).pack(side=tk.LEFT)
+
+            # 按钮组
+            btn_frame = tk.Frame(title_frame, bg=C.BG)
+            btn_frame.pack(side=tk.RIGHT)
+            tk.Button(
+                btn_frame, text="X 关闭", command=popup.destroy,
+                bg=C.BORDER_LIGHT, fg=C.TEXT_SUB,
+                relief=tk.FLAT, font=("Microsoft YaHei", 9),
+                cursor="hand2", padx=10, pady=2,
+            ).pack(side=tk.RIGHT, padx=(6, 0))
+            tk.Button(
+                btn_frame, text="保存聚类结果表",
+                command=lambda: self._save_trajectory_table(counter, flows),
+                bg=C.ACCENT, fg=C.BG,
+                relief=tk.FLAT, font=("Microsoft YaHei", 9),
+                cursor="hand2", padx=10, pady=2,
+            ).pack(side=tk.RIGHT, padx=(6, 0))
+            tk.Button(
+                btn_frame, text="保存轨迹聚类图",
+                command=lambda: self._save_trajectory_image(cv_image),
+                bg=C.GREEN, fg=C.BG,
+                relief=tk.FLAT, font=("Microsoft YaHei", 9),
+                cursor="hand2", padx=10, pady=2,
+            ).pack(side=tk.RIGHT, padx=(6, 0))
+
+            # 图像 + 统计表 左右并排
+            main_body = tk.Frame(popup, bg=C.BG)
+            main_body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+
+            # 左：轨迹图像
+            canvas = tk.Canvas(main_body, bg=C.PANEL, highlightthickness=1,
+                              highlightbackground=C.BORDER, width=500)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+            canvas.create_image(3, 3, anchor=tk.NW, image=img)
+            canvas.image = img
+
+            # 右：分方向车型统计表（Treeview）
+            table_frame = tk.Frame(main_body, bg=C.BG)
+            table_frame.pack(side=tk.LEFT, fill=tk.BOTH, padx=(5, 0))
+
+            tk.Label(table_frame, text="分方向车型统计",
+                    bg=C.BG, fg=C.TEXT,
+                    font=("Microsoft YaHei", 9, "bold")).pack(anchor=tk.W, pady=(0, 3))
+
+            tree_scroll = tk.Scrollbar(table_frame, orient=tk.VERTICAL)
+            tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+            tree = ttk.Treeview(table_frame, columns=("count",), show="tree headings",
+                               height=14, selectmode="none",
+                               yscrollcommand=tree_scroll.set)
+            tree_scroll.configure(command=tree.yview)
+            tree.heading("#0", text="方向 / 车型")
+            tree.heading("count", text="数量")
+            tree.column("#0", width=140, anchor=tk.W)
+            tree.column("count", width=50, anchor=tk.CENTER)
+            tree.pack(fill=tk.BOTH, expand=True)
+
+            from src.auto_traffic_counter import get_flow_color
+            class_labels = getattr(self, '_detect_class_labels', {})
+            for i, flow in enumerate(flows):
+                c = get_flow_color(i)
+                color_hex = f"#{c[2]:02x}{c[1]:02x}{c[0]:02x}"
+                if flow.flow_id >= 0:
+                    flow_label = f"方向{flow.flow_id} ({flow.vehicle_count})"
+                else:
+                    flow_label = f"其他/噪声 ({flow.vehicle_count})"
+                node = tree.insert("", tk.END, text=flow_label,
+                                  values=(str(flow.vehicle_count),),
+                                  tags=(f"flow_{i}",))
+                tree.tag_configure(f"flow_{i}", background=color_hex,
+                                  foreground="#ffffff" if sum(c) < 400 else "#000000")
+                for cid, cnt in sorted(flow.by_class.items()):
+                    cname = class_labels.get(cid, f"类别{cid}")
+                    tree.insert(node, tk.END, text=f"  {cname}",
+                               values=(str(cnt),))
+                tree.item(node, open=True)
+
+            tree.tag_configure("flow_", background=C.PANEL)
+
+            # 图例
+            legend = tk.Frame(popup, bg=C.BG)
+            legend.pack(fill=tk.X, padx=10, pady=(5, 8))
+            for i, flow in enumerate(flows):
+                c = get_flow_color(i)
+                color_hex = f"#{c[2]:02x}{c[1]:02x}{c[0]:02x}"
+                label = counter.get_flow_label(flow)
+                ef = tk.Frame(legend, bg=C.BG)
+                ef.pack(side=tk.LEFT, padx=(0, 15))
+                tk.Label(ef, bg=color_hex, width=3, height=1).pack(side=tk.LEFT, padx=(0, 4))
+                tk.Label(ef, text=label, bg=C.BG, fg=C.TEXT_SUB,
+                         font=("Microsoft YaHei", 8)).pack(side=tk.LEFT)
+
+            # 确保窗口显示
+            popup.lift()
+            popup.focus_force()
+            self._log(f"轨迹图窗口已弹出: {len(flows)} 个方向")
+        except Exception as e:
+            self._log(f"轨迹图绘制异常: {e}")
+            self._log(traceback.format_exc())
+
+    def _auto_save_trajectory_image(self, counter, flows, output_path: str):
+        """自动保存分类轨迹图（不使用对话框）"""
+        try:
+            cv_image = counter.draw_flow_canvas(flows, canvas_width=800, canvas_height=600)
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(output_path), cv_image)
+            self._log(f"✓ 分类轨迹图已保存: {output_path}")
+        except Exception as e:
+            self._log(f"保存轨迹图失败: {e}")
+
+    def _auto_save_trajectory_data(self, counter, flows, output_path: str):
+        """自动保存轨迹坐标数据（不使用对话框）"""
+        try:
+            import csv, math
+            fps = max(self.fps, 1.0)
+            tracker_to_flow = {}
+            for flow in flows:
+                for traj in flow.trajectories:
+                    tracker_to_flow[traj.tracker_id] = flow.flow_id
+
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["车辆ID", "时间(s)", "帧号", "X坐标", "Y坐标",
+                                 "瞬时方向角(°)", "车型ID", "车型名称", "聚类方向ID", "聚类方向"])
+                for flow in flows:
+                    direction_label = counter.get_flow_label(flow) if flow.flow_id >= 0 else "其他/噪声"
+                    for traj in flow.trajectories:
+                        pts = traj.points
+                        for i, pt in enumerate(pts):
+                            ts_val = pt.frame_idx / fps
+                            if i > 0:
+                                prev_pt = pts[i - 1]
+                                dx = pt.x - prev_pt.x
+                                dy = pt.y - prev_pt.y
+                                angle = math.degrees(math.atan2(-dy, dx))
+                                if angle < 0:
+                                    angle += 360
+                                angle_str = f"{angle:.1f}"
+                            else:
+                                angle_str = ""
+                            writer.writerow([
+                                traj.tracker_id, f"{ts_val:.2f}", pt.frame_idx,
+                                f"{pt.x:.1f}", f"{pt.y:.1f}", angle_str,
+                                traj.class_id,
+                                self._detect_class_labels.get(traj.class_id, f"类别{traj.class_id}"),
+                                flow.flow_id if flow.flow_id >= 0 else -1, direction_label,
+                            ])
+            total_records = sum(len(f.trajectories) for f in flows)
+            self._log(f"✓ 轨迹坐标数据已保存: {output_path} (共 {total_records} 条轨迹)")
+        except Exception as e:
+            self._log(f"保存轨迹数据失败: {e}")
+
+    def _save_trajectory_image(self, cv_image):
+        """保存轨迹聚类图到 PNG 文件"""
+        from tkinter import filedialog
+        import time as _time
+        path = filedialog.asksaveasfilename(
+            title="保存轨迹聚类图",
+            defaultextension=".png",
+            filetypes=[("PNG 图片", "*.png"), ("JPG 图片", "*.jpg")],
+            initialfile=f"trajectory_flow_{int(_time.time())}.png",
+        )
+        if path:
+            cv2.imwrite(path, cv_image)
+            self._log(f"轨迹聚类图已保存: {path}")
+
+    def _save_trajectory_table(self, counter, flows):
+        """导出轨迹聚类结果表（含车辆ID、帧号、坐标、车型、方向）"""
+        from tkinter import filedialog
+        from src.auto_traffic_counter import get_flow_color
+        import time as _time
+        import csv
+
+        path = filedialog.asksaveasfilename(
+            title="保存轨迹聚类结果表",
+            defaultextension=".csv",
+            filetypes=[("CSV 表格", "*.csv"), ("所有文件", "*.*")],
+            initialfile=f"trajectory_data_{int(_time.time())}.csv",
+        )
+        if not path:
             return
 
-        # 清除旧内容
-        self.traj_canvas.delete("all")
+        try:
+            import math
+            fps = max(self.fps, 1.0)
 
-        # 将 numpy 图像转为 PhotoImage 显示在 Canvas 上
-        cv_image = counter.draw_flow_canvas(
-            flows,
-            canvas_width=360,
-            canvas_height=200,
-        )
-        # BGR → RGB → PhotoImage
-        rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-        img = ImageTk.PhotoImage(Image.fromarray(rgb_image))
-        self.traj_canvas.create_image(0, 0, anchor=tk.NW, image=img)
-        # 保持引用防止被垃圾回收
-        self._traj_photo = img
+            # 构建 tracker_id → flow_id 映射
+            tracker_to_flow: dict = {}
+            for flow in flows:
+                for traj in flow.trajectories:
+                    tracker_to_flow[traj.tracker_id] = flow.flow_id
+
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["车辆ID", "时间(s)", "帧号", "X坐标", "Y坐标", "瞬时方向角(°)", "车型ID", "车型名称", "聚类方向ID", "聚类方向"])
+
+                for flow in flows:
+                    direction_label = counter.get_flow_label(flow) if flow.flow_id >= 0 else "其他/噪声"
+                    for traj in flow.trajectories:
+                        pts = traj.points
+                        for i, pt in enumerate(pts):
+                            ts = pt.frame_idx / fps
+                            # 计算瞬时方向角：从上一个点到当前点的方向
+                            if i > 0:
+                                prev_pt = pts[i - 1]
+                                dx = pt.x - prev_pt.x
+                                dy = pt.y - prev_pt.y
+                                angle = math.degrees(math.atan2(-dy, dx))
+                                if angle < 0:
+                                    angle += 360
+                                angle_str = f"{angle:.1f}"
+                            else:
+                                angle_str = ""
+                            writer.writerow([
+                                traj.tracker_id,
+                                f"{ts:.2f}",
+                                pt.frame_idx,
+                                f"{pt.x:.1f}",
+                                f"{pt.y:.1f}",
+                                angle_str,
+                                traj.class_id,
+                                self._detect_class_labels.get(traj.class_id, f"类别{traj.class_id}"),
+                                flow.flow_id if flow.flow_id >= 0 else -1,
+                                direction_label,
+                            ])
+
+            self._log(f"轨迹聚类结果表已保存: {path} (共 {sum(1 for f in flows for t in f.trajectories for _ in t.points)} 条记录)")
+        except Exception as e:
+            import traceback
+            self._log(f"保存轨迹结果表失败: {e}")
+            self._log(traceback.format_exc())
 
     def _draw_road_mask(self, frame: np.ndarray) -> np.ndarray:
         """绘制道路边界掩码（在帧上叠加绿色道路区域）"""
@@ -2461,58 +3690,58 @@ class UAVDetectionUI:
 
     def _show_entry_menu(self, item, x, y):
         """进口道节点右键菜单"""
-        menu = tk.Menu(self.root, tearoff=0, bg="#ffffff", fg="#333333",
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT,
                        font=("Microsoft YaHei", 9))
-        menu.add_command(label="✏️ 重命名", command=lambda: self._rename_tree_node(item))
+        menu.add_command(label="重命名", command=lambda: self._rename_tree_node(item))
         menu.add_separator()
         for direction in ["直行", "左转", "右转", "掉头"]:
-            menu.add_command(label=f"➕ 添加{direction}",
+            menu.add_command(label=f"添加{direction}",
                              command=lambda d=direction: self._add_direction(item, d))
-        menu.add_command(label="➕ 添加自定义方向...",
+        menu.add_command(label="添加自定义方向...",
                          command=lambda: self._add_custom_direction(item))
         menu.add_separator()
-        menu.add_command(label="❌ 删除进口道", command=lambda: self._delete_tree_item(item))
+        menu.add_command(label="删除进口道", command=lambda: self._delete_tree_item(item))
         menu.post(x, y)
 
     def _show_direction_menu(self, item, parent_item, x, y):
         """方向节点右键菜单"""
-        menu = tk.Menu(self.root, tearoff=0, bg="#ffffff", fg="#333333",
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT,
                        font=("Microsoft YaHei", 9))
-        menu.add_command(label="✏️ 重命名方向", command=lambda: self._rename_tree_node(item))
+        menu.add_command(label="重命名方向", command=lambda: self._rename_tree_node(item))
         menu.add_separator()
-        menu.add_command(label="✏️ 修改画线", command=lambda: self._modify_line(item, parent_item))
-        menu.add_command(label="🗑️ 删除画线", command=lambda: self._delete_line(item, parent_item))
+        menu.add_command(label="修改画线", command=lambda: self._modify_line(item, parent_item))
+        menu.add_command(label="删除画线", command=lambda: self._delete_line(item, parent_item))
         menu.add_separator()
         # 移动到其他进口道
-        move_menu = tk.Menu(menu, tearoff=0, bg="#ffffff", fg="#333333",
+        move_menu = tk.Menu(menu, tearoff=0, bg=C.CARD, fg=C.TEXT,
                             font=("Microsoft YaHei", 9))
         for child in self.tree_traffic.get_children():
             if child != parent_item:
                 entry_name = self.tree_traffic.item(child, "text")
                 move_menu.add_command(label=entry_name,
                                       command=lambda c=child, en=entry_name: self._move_direction(item, parent_item, c, en))
-        menu.add_cascade(label="📁 移动到", menu=move_menu)
+        menu.add_cascade(label="移动到", menu=move_menu)
         menu.add_separator()
-        menu.add_command(label="❌ 删除此转向", command=lambda: self._delete_tree_item(item))
+        menu.add_command(label="删除此转向", command=lambda: self._delete_tree_item(item))
         menu.post(x, y)
 
     def _show_empty_area_menu(self, x, y):
         """树形控件空白处/标题行右键菜单（添加进口道或转向）"""
-        menu = tk.Menu(self.root, tearoff=0, bg="#ffffff", fg="#333333",
+        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT,
                        font=("Microsoft YaHei", 9))
 
         # 添加进口道
-        menu.add_command(label="➕ 添加进口道", command=self._on_add_entry)
+        menu.add_command(label="添加进口道", command=self._on_add_entry)
 
         # 如果已有进口道，提供快捷添加转向选项
         entries = self.tree_traffic.get_children()
         if entries:
             menu.add_separator()
-            add_dir_menu = tk.Menu(menu, tearoff=0, bg="#ffffff", fg="#333333",
+            add_dir_menu = tk.Menu(menu, tearoff=0, bg=C.CARD, fg=C.TEXT,
                                    font=("Microsoft YaHei", 9))
             for entry_node in entries:
                 entry_name = self.tree_traffic.item(entry_node, "text")
-                entry_sub = tk.Menu(add_dir_menu, tearoff=0, bg="#ffffff", fg="#333333",
+                entry_sub = tk.Menu(add_dir_menu, tearoff=0, bg=C.CARD, fg=C.TEXT,
                                     font=("Microsoft YaHei", 9))
                 for direction in ["直行", "左转", "右转", "掉头"]:
                     entry_sub.add_command(
@@ -2656,7 +3885,7 @@ class UAVDetectionUI:
         if not self.lbl_draw_hint:
             self.lbl_draw_hint = tk.Label(
                 self.video_label.master,
-                text="", bg="#333333", fg="#ffffff",
+                text="", bg=C.ACCENT, fg=C.BG,
                 font=("Microsoft YaHei", 10), padx=10, pady=4
             )
             self.lbl_draw_hint.place(relx=0.5, y=10, anchor="n")
@@ -2719,13 +3948,142 @@ class UAVDetectionUI:
         else:
             messagebox.showinfo("提示", "未找到该视频对应的截面线配置")
 
-    def _export_cs_excel(self, traffic_stats, class_labels_zh, video_name, duration_str, detect_time_str, excel_path):
-        """导出截面流量统计 Excel（主线程调用）"""
+    def _export_combined_excel(self, export_sources: dict, class_labels_zh: dict,
+                               video_name: str, duration_str: str,
+                               detect_time_str: str, excel_path: str):
+        """导出统一流量统计 Excel（主线程调用）
+        export_sources 可含:
+          'cs'   → traffic_stats (截面线统计)
+          'auto' → (auto_traffic_counter, auto_flows) (自动聚类统计)
+        """
         try:
-            path = export_cross_section_excel(
-                traffic_stats, class_labels_zh, video_name, duration_str, detect_time_str, Path(excel_path)
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+            path = Path(excel_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            wb = Workbook()
+
+            # 通用样式
+            header_font = Font(name="Microsoft YaHei", bold=True, size=11, color="FFFFFF")
+            header_fill = PatternFill(start_color="4A90D9", end_color="4A90D9", fill_type="solid")
+            header_align = Alignment(horizontal="center", vertical="center")
+            thin_border = Border(
+                left=Side(style="thin"), right=Side(style="thin"),
+                top=Side(style="thin"), bottom=Side(style="thin"),
             )
-            self._log(f"流量统计表已导出: {path.name}")
+
+            # ── 截面线统计 Sheet ──
+            if "cs" in export_sources:
+                traffic_stats = export_sources["cs"]
+                ws = wb.active
+                ws.title = "截面流量统计"
+
+                ws.merge_cells("A1:D1")
+                ws["A1"] = f"Video: {video_name}"; ws["A1"].font = Font(name="Microsoft YaHei", bold=True, size=12)
+                ws.merge_cells("A2:D2")
+                ws["A2"] = f"Duration: {duration_str}"; ws["A2"].font = Font(name="Microsoft YaHei", size=11)
+                if detect_time_str:
+                    ws.merge_cells("A3:D3")
+                    ws["A3"] = f"Detection Time: {detect_time_str}"
+                    ws["A3"].font = Font(name="Microsoft YaHei", size=11, color="4A90D9")
+
+                # 收集所有 class_id
+                by_entry = traffic_stats.get("by_entry", {})
+                all_cids = set()
+                for entry_name in by_entry:
+                    for direction in by_entry[entry_name]:
+                        for cid in by_entry[entry_name][direction]:
+                            all_cids.add(cid)
+                sorted_cids = sorted(all_cids)
+
+                offset = 4 if detect_time_str else 3
+                hr = offset + 1
+                headers = ["进口道", "方向"] + [class_labels_zh.get(c, f"类别{c}") for c in sorted_cids] + ["合计"]
+                for ci, h in enumerate(headers, 1):
+                    c = ws.cell(row=hr, column=ci, value=h)
+                    c.font = header_font; c.fill = header_fill; c.alignment = header_align; c.border = thin_border
+
+                dr = hr + 1
+                for entry_name in sorted(by_entry.keys()):
+                    for direction in sorted(by_entry[entry_name].keys()):
+                        counts = by_entry[entry_name][direction]
+                        row_vals = [entry_name, direction]
+                        row_total = 0
+                        for cid in sorted_cids:
+                            v = counts.get(cid, 0)
+                            row_vals.append(v)
+                            row_total += v
+                        row_vals.append(row_total)
+                        for ci, val in enumerate(row_vals, 1):
+                            c = ws.cell(row=dr, column=ci, value=val)
+                            c.alignment = Alignment(horizontal="center", vertical="center")
+                            c.border = thin_border
+                        dr += 1
+
+                from openpyxl.utils import get_column_letter
+                ws.column_dimensions["A"].width = 18
+                ws.column_dimensions["B"].width = 12
+                for i, cid in enumerate(sorted_cids, 3):
+                    name = class_labels_zh.get(cid, f"类别{cid}")
+                    ws.column_dimensions[get_column_letter(i)].width = max(10, len(name) * 2 + 2)
+                ws.column_dimensions[get_column_letter(len(headers))].width = 10
+
+            # ── 自动聚类统计 Sheet ──
+            if "auto" in export_sources:
+                auto_traffic_counter, auto_flows = export_sources["auto"]
+                from src.auto_traffic_counter import _angle_to_label
+                ws = wb.create_sheet("自动聚类统计")
+
+                ws.merge_cells("A1:C1")
+                ws["A1"] = f"Video: {video_name}"; ws["A1"].font = Font(name="Microsoft YaHei", bold=True, size=12)
+                ws.merge_cells("A2:C2")
+                ws["A2"] = f"Duration: {duration_str}"; ws["A2"].font = Font(name="Microsoft YaHei", size=11)
+                if detect_time_str:
+                    ws.merge_cells("A3:C3")
+                    ws["A3"] = f"Detection Time: {detect_time_str}"
+                    ws["A3"].font = Font(name="Microsoft YaHei", size=11, color="4A90D9")
+
+                # 收集所有 class_id for auto
+                auto_cids = set()
+                for flow in auto_flows:
+                    auto_cids.update(flow.by_class.keys())
+                sorted_auto_cids = sorted(auto_cids)
+
+                offset = 4 if detect_time_str else 3
+                hr = offset + 1
+                headers = ["方向"] + [class_labels_zh.get(c, f"类别{c}") for c in sorted_auto_cids] + ["合计"]
+                for ci, h in enumerate(headers, 1):
+                    c = ws.cell(row=hr, column=ci, value=h)
+                    c.font = header_font; c.fill = header_fill; c.alignment = header_align; c.border = thin_border
+
+                dr = hr + 1
+                for flow in auto_flows:
+                    dir_name = _angle_to_label(flow.mean_angle) if flow.flow_id >= 0 else "其他/噪声"
+                    label = f"{dir_name} (Flow {flow.flow_id})"
+                    row_vals = [label]
+                    row_total = 0
+                    for cid in sorted_auto_cids:
+                        v = flow.by_class.get(cid, 0)
+                        row_vals.append(v)
+                        row_total += v
+                    row_vals.append(row_total)
+                    for ci, val in enumerate(row_vals, 1):
+                        c = ws.cell(row=dr, column=ci, value=val)
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+                        c.border = thin_border
+                    dr += 1
+
+                from openpyxl.utils import get_column_letter
+                ws.column_dimensions["A"].width = 24
+                for i, cid in enumerate(sorted_auto_cids, 2):
+                    name = class_labels_zh.get(cid, f"类别{cid}")
+                    ws.column_dimensions[get_column_letter(i)].width = max(10, len(name) * 2 + 2)
+                ws.column_dimensions[get_column_letter(len(headers))].width = 10
+
+            wb.save(str(path))
+            sheet_count = len(export_sources)
+            self._log(f"✓ 流量统计表已导出: {path.name} (共 {sheet_count} 个工作表)")
             if messagebox.askyesno("完成", f"流量统计结果已保存到:\n{path}\n\n是否打开所在文件夹？"):
                 import subprocess
                 subprocess.run(["explorer", "/select,", str(path)])
@@ -2909,6 +4267,7 @@ class UAVDetectionUI:
             "  ✓ 增加IoU + IoM 的非极大值抑制\n"
             "  ✓ 增加道路边界检测\n"
             "  ✓ 进口道/转向方向流量统计\n"
+            "  ✓ 基于轨迹聚类的自动流量统计\n"
             "  ✓ 自动导出 Excel 流量报表\n\n"
             "2026 UAV Detection System"
         )
