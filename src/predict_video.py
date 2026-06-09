@@ -347,9 +347,10 @@ def _draw_trajectories_on_frame(frame: np.ndarray, counter) -> None:
     except ImportError:
         return
 
+
     trajectories = counter.trajectories
     color_idx = 0
-    for tracker_id, traj in trajectories.items():
+    for traj in trajectories:
         if traj.length < 2:
             continue
         color = get_flow_color(color_idx)
@@ -389,6 +390,7 @@ def run_inference(
     show_labels: bool = True,
     use_sahi: bool = True,
     write_output: bool = True,
+    enable_detection: bool = True,
     enable_road_detect: bool = False,
     road_model_type: str = "hsv",
     enable_auto_traffic: bool = False,
@@ -508,8 +510,8 @@ def run_inference(
         if not ret: break
         if frame_index >= end_frame: break
 
-        # 跳帧判断
-        do_detect = should_run_detection(frame_index - start_frame, detect_skip_interval)
+        # 跳帧判断 + 目标检测总开关
+        do_detect = enable_detection and should_run_detection(frame_index - start_frame, detect_skip_interval)
 
         if do_detect:
             if use_sahi:
@@ -661,9 +663,10 @@ def run_inference(
         frame_count += 1
         frame_index += 1
 
-        # 进度回调
+        # 进度回调（传递实时流量统计）
+        _traffic_snapshot = traffic_counter.get_stats() if traffic_counter else {}
         if progress_callback:
-            progress_callback(frame_count, end_frame - start_frame, _annotated, detect_count, {}, {})
+            progress_callback(frame_count, end_frame - start_frame, _annotated, detect_count, {}, _traffic_snapshot)
 
     # ── 10. 后处理 ──
     cap.release()

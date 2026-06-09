@@ -1,0 +1,79 @@
+video_name: DJI_0151.MP4
+video_path: F:\cursor\uav-aerial-vehicle-detection\data\天府长岛交通调查视频\0515看现场\DJI_0151.MP4
+entries:
+  天府一街向西:
+    lines:
+    - line_id: line_6c5facb2
+      entry_name: 天府一街向西
+      direction: 直行
+      x1: 2290
+      y1: 1031
+      x2: 2286
+      y2: 1108
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+    - line_id: line_77163f19
+      entry_name: 天府一街向西
+      direction: 右转
+      x1: 2383
+      y1: 938
+      x2: 2265
+      y2: 991
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+    - line_id: line_56ead1b9
+      entry_name: 天府一街向西
+      direction: 左转
+      x1: 2298
+      y1: 1124
+      x2: 2395
+      y2: 1229
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+  天府一街向东:
+    lines:
+    - line_id: line_b657761b
+      entry_name: 天府一街向东
+      direction: 直行
+      x1: 1703
+      y1: 1156
+      x2: 1699
+      y2: 1221
+      color:
+      - 52
+      - 152
+      - 219
+      is_drawn: true
+    - line_id: line_5862d461
+      entry_name: 天府一街向东
+      direction: 左转
+      x1: 1695
+      y1: 1084
+      x2: 1715
+      y2: 1140
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true
+    - line_id: line_f951e709
+      entry_name: 天府一街向东
+      direction: 右转
+      x1: 1331
+      y1: 1274
+      x2: 1177
+      y2: 1330
+      color:
+      - 231
+      - 76
+      - 60
+      is_drawn: true

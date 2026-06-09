@@ -1,0 +1,88 @@
+periods:
+  晚高峰:
+    start: 940
+    end: 6139
+    start_time: 00:00:31
+    end_time: 00:03:24
+    entries:
+      盛兴街:
+        lines:
+        - line_id: line_dcc32384
+          entry_name: 盛兴街
+          direction: 直行
+          x1: 2048
+          y1: 1828
+          x2: 2260
+          y2: 1816
+          is_drawn: true
+        - line_id: line_e88cde60
+          entry_name: 盛兴街
+          direction: 左转
+          x1: 1900
+          y1: 1472
+          x2: 1696
+          y2: 1504
+          is_drawn: true
+        - line_id: line_062233aa
+          entry_name: 盛兴街
+          direction: 右转
+          x1: 2092
+          y1: 1448
+          x2: 2244
+          y2: 1516
+          is_drawn: true
+      天府一街东:
+        lines:
+        - line_id: line_5bf5e710
+          entry_name: 天府一街东
+          direction: 直行
+          x1: 2492
+          y1: 1196
+          x2: 2432
+          y2: 1080
+          is_drawn: true
+        - line_id: line_53b301af
+          entry_name: 天府一街东
+          direction: 右转
+          x1: 2028
+          y1: 1048
+          x2: 1964
+          y2: 1092
+          is_drawn: true
+      天府一街西:
+        lines:
+        - line_id: line_6cbc4ddd
+          entry_name: 天府一街西
+          direction: 直行
+          x1: 1552
+          y1: 1324
+          x2: 1572
+          y2: 1496
+          is_drawn: true
+        - line_id: line_6014ad08
+          entry_name: 天府一街西
+          direction: 左转
+          x1: 1328
+          y1: 1264
+          x2: 1352
+          y2: 1348
+          is_drawn: true
+      富华北路:
+        lines:
+        - line_id: line_a3288598
+          entry_name: 富华北路
+          direction: 左转
+          x1: 1720
+          y1: 964
+          x2: 1676
+          y2: 972
+          is_drawn: true
+        - line_id: line_87eb78e0
+          entry_name: 富华北路
+          direction: 右转
+          x1: 1644
+          y1: 1032
+          x2: 1536
+          y2: 1016
+          is_drawn: true
+video_name: DJI_0147.MP4

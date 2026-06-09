@@ -850,6 +850,8 @@ class UAVDetectionUI:
         self.var_use_sahi = tk.BooleanVar(value=True)           # 启用SAHI切片检测
         self.var_write_output = tk.BooleanVar(value=True)       # 输出检测视频
         self.var_export_traffic = tk.BooleanVar(value=True)     # 输出流量统计表
+        self.var_enable_detection = tk.BooleanVar(value=True)    # 目标检测
+        self.var_enable_tracking = tk.BooleanVar(value=True)     # 轨迹跟踪
         self.var_enable_road_detect = tk.BooleanVar(value=False) # 启用车道边界检测
         self.var_auto_traffic = tk.BooleanVar(value=False)       # 自动流量统计
         self.var_show_trajectory = tk.BooleanVar(value=True)   # 实时绘制轨迹
@@ -1193,29 +1195,29 @@ class UAVDetectionUI:
         tk.Label(parent, text="⚙ 功能配置",
                 bg=C.PANEL, fg=C.TEXT, font=FONT_HEADER).pack(anchor=tk.W, padx=15, pady=(10, 5))
 
-        # Row 1: 画线流量统计 + 自动流量统计
+        # Row 1: 目标检测 + 轨迹跟踪
         quick_frame = tk.Frame(parent, bg=C.CARD)
         quick_frame.pack(fill=tk.X, padx=10, pady=(3, 0))
 
-        cb_traffic_top = tk.Checkbutton(
-            quick_frame, text="📏 画线流量统计",
-            variable=self.var_traffic_count,
+        cb_detect = tk.Checkbutton(
+            quick_frame, text="🎯 目标检测",
+            variable=self.var_enable_detection,
             bg=C.CARD, fg=C.GREEN,
             selectcolor=C.SURFACE, activebackground=C.CARD,
             activeforeground=C.GREEN, font=FONT_BODY,
             anchor=tk.W, padx=10, pady=2
         )
-        cb_traffic_top.pack(side=tk.LEFT)
+        cb_detect.pack(side=tk.LEFT)
 
-        cb_auto_traffic = tk.Checkbutton(
-            quick_frame, text="📈 自动流量统计",
-            variable=self.var_auto_traffic,
+        cb_track = tk.Checkbutton(
+            quick_frame, text="🔗 轨迹跟踪",
+            variable=self.var_enable_tracking,
             bg=C.CARD, fg=C.GREEN,
             selectcolor=C.SURFACE, activebackground=C.CARD,
             activeforeground=C.GREEN, font=FONT_BODY,
             anchor=tk.W, padx=10, pady=2
         )
-        cb_auto_traffic.pack(side=tk.LEFT)
+        cb_track.pack(side=tk.LEFT)
 
         # Row 2: 道路边界检测
         quick_frame2 = tk.Frame(parent, bg=C.CARD)
@@ -1377,7 +1379,7 @@ class UAVDetectionUI:
         display_row = tk.Frame(display_section, bg=C.CARD)
         display_row.pack(fill=tk.X, padx=10, pady=4)
 
-        cb_show_lines = tk.Checkbutton(display_row, text="🛣 显示车型标注",
+        cb_show_lines = tk.Checkbutton(display_row, text="📦 显示检测框和车型",
             variable=self.var_show_count_lines,
             bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
             activebackground=C.CARD, activeforeground=C.GREEN,
@@ -1401,6 +1403,32 @@ class UAVDetectionUI:
             activebackground=C.CARD, activeforeground=C.GREEN,
             font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
         cb_show_traj.pack(side=tk.LEFT)
+
+        # --- 流量统计方法 ---
+        tk.Frame(scroll_frame, bg=C.BORDER, height=1).pack(fill=tk.X, padx=0)
+
+        flow_section = tk.Frame(scroll_frame, bg=C.CARD)
+        flow_section.pack(fill=tk.X, padx=0, pady=5)
+
+        tk.Label(flow_section, text="📊 流量统计方法",
+                bg=C.CARD, fg=C.TEXT, font=FONT_SECTION).pack(anchor=tk.W, padx=10, pady=(8, 5))
+
+        flow_row = tk.Frame(flow_section, bg=C.CARD)
+        flow_row.pack(fill=tk.X, padx=10, pady=4)
+
+        cb_traffic_flow = tk.Checkbutton(flow_row, text="📏 画线流量统计",
+            variable=self.var_traffic_count,
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
+        cb_traffic_flow.pack(side=tk.LEFT, padx=(0, 10))
+
+        cb_auto_flow = tk.Checkbutton(flow_row, text="📈 自动流量统计",
+            variable=self.var_auto_traffic,
+            bg=C.CARD, fg=C.GREEN, selectcolor=C.SURFACE,
+            activebackground=C.CARD, activeforeground=C.GREEN,
+            font=FONT_BODY, anchor=tk.W, padx=8, pady=2)
+        cb_auto_flow.pack(side=tk.LEFT)
 
         # --- 输出设置 ---
         tk.Frame(scroll_frame, bg=C.BORDER, height=1).pack(fill=tk.X, padx=0)
@@ -1560,9 +1588,13 @@ class UAVDetectionUI:
         self._file_highlighted: str = ""
 
     def _scan_file_browser(self, *args):
-        """扫描 data/ 和 outputs/ 目录，刷新文件树"""
+        """扫描 data/ 和 outputs/ 目录，刷新文件树（保留展开状态）"""
         import os, glob as _glob
         tree = self.file_tree
+
+        # 保存展开状态
+        expanded_paths = self._save_expanded_state()
+
         # 清除
         for child in tree.get_children():
             tree.delete(child)
@@ -1580,6 +1612,40 @@ class UAVDetectionUI:
         # 扫描 outputs/
         if out_dir.exists():
             self._scan_dir(out_dir, self._file_root_out, is_data=False)
+
+        # 恢复展开状态
+        self._restore_expanded_state(expanded_paths)
+
+    def _save_expanded_state(self) -> set:
+        """保存所有展开节点的路径标识"""
+        tree = self.file_tree
+        expanded = set()
+        for item in tree.get_children():
+            self._collect_expanded(tree, item, "", expanded)
+        return expanded
+
+    def _collect_expanded(self, tree, item, prefix, expanded):
+        text = tree.item(item, "text").strip()
+        path = f"{prefix}/{text}" if prefix else text
+        if tree.item(item, "open"):
+            expanded.add(path)
+            for child in tree.get_children(item):
+                self._collect_expanded(tree, child, path, expanded)
+
+    def _restore_expanded_state(self, expanded_paths: set):
+        """恢复节点展开状态"""
+        tree = self.file_tree
+
+        def _restore(item, prefix):
+            text = tree.item(item, "text").strip()
+            path = f"{prefix}/{text}" if prefix else text
+            if path in expanded_paths:
+                tree.item(item, open=True)
+            for child in tree.get_children(item):
+                _restore(child, path)
+
+        for root_item in tree.get_children():
+            _restore(root_item, "")
 
     def _scan_dir(self, directory: Path, parent_node: str, is_data: bool):
         """扫描目录文件添加到树节点"""
@@ -1758,13 +1824,105 @@ class UAVDetectionUI:
         return self._seconds_to_time_str(frame / max(1.0, fps))
 
     def _on_file_double_click(self, event):
-        """双击文件浏览器节点"""
+        """双击文件浏览器节点 —— 时段双击跳转到对应范围"""
         tree = self.file_tree
         item = tree.identify_row(event.y)
         if not item: return
+        tags = str(tree.item(item, "tags"))
+        values = tree.item(item, "values") or []
+
+        # 时段节点：双击 → 设置起终点范围并跳转
+        if "period" in tags and len(values) >= 2:
+            video_path = Path(values[0])
+            period_name = values[1]
+            self._apply_period_range(video_path, period_name)
+            return
+
+        # 其他节点：打开对应视频
         video_path = self._find_video_for_node(item)
         if video_path and video_path.exists():
             self._open_video_from_browser(video_path)
+
+    def _apply_period_range(self, video_path: Path, period_name: str):
+        """应用时段范围：打开视频（如未打开）→ 设置起终点 → 跳转到起点"""
+        data = self._load_config_yaml(video_path)
+        if not data: return
+        pd = data.get("periods", {}).get(period_name)
+        if not pd:
+            self._log(f"时段配置不存在: {period_name}")
+            return
+
+        start = int(pd.get("start", 0))
+        end = int(pd.get("end", self.total_frames or 9999))
+
+        # 如果视频未打开或不是当前视频，先打开
+        current_open = self.video_path and self.video_path.resolve() == video_path.resolve()
+        if not current_open:
+            self._open_video_from_browser(video_path)
+            # _load_video 会重置 start/end，需要 after 等加载完成后覆盖
+            self.root.after(400, lambda: self._do_set_period_range_ui(start, end, period_name))
+        else:
+            self._do_set_period_range_ui(start, end, period_name)
+
+    def _do_set_period_range_ui(self, start: int, end: int, period_name: str = ""):
+        """设置UI起终点范围并跳转到起点（主线程调用）"""
+        self.start_frame = start
+        self.end_frame = min(end, self.total_frames - 1) if self.total_frames > 0 else end
+        # 同步播放线程
+        if self.player_thread and self.player_thread.is_alive():
+            self.player_thread._start_frame = self.start_frame
+            self.player_thread._end_frame = self.end_frame
+        # 更新时间线
+        self.timeline.configure(
+            min_val=0,
+            max_val=max(1, self.total_frames - 1),
+            start_value=self.start_frame,
+            end_value=self.end_frame,
+        )
+        self.timeline.set_playhead(self.start_frame)
+        # 加载该时段的截面线
+        self._load_period_lines(period_name)
+        # 暂停播放并跳转到起点帧
+        self._pause()
+        self._seek_absolute(self.start_frame)
+        self._update_frame_info()
+        label = f"时段「{period_name}」" if period_name else ""
+        self._log(f"{label}范围已加载: 帧 {self.start_frame} - {self.end_frame}")
+
+    def _load_period_lines(self, period_name: str):
+        """从 YAML 加载指定时段的截面线到 self.count_lines"""
+        if not self.video_path or not period_name:
+            return
+        data = self._load_config_yaml(self.video_path)
+        if not data:
+            return
+        periods = data.get("periods", {})
+        pd = periods.get(period_name)
+        if not pd:
+            return
+        entries = pd.get("entries", {})
+        lines = []
+        for entry_name, entry_data in entries.items():
+            if not isinstance(entry_data, dict):
+                continue
+            for ld in entry_data.get("lines", []):
+                try:
+                    from src.cross_section_counter import CrossSectionLine
+                    cl = CrossSectionLine(
+                        line_id=ld.get("line_id", ""),
+                        entry_name=entry_name,
+                        direction=ld.get("direction", ""),
+                        x1=int(ld.get("x1", 0)), y1=int(ld.get("y1", 0)),
+                        x2=int(ld.get("x2", 0)), y2=int(ld.get("y2", 0)),
+                        color=tuple(ld.get("color", (0, 255, 255))),
+                        is_drawn=ld.get("is_drawn", True),
+                    )
+                    lines.append(cl)
+                except Exception:
+                    pass
+        if lines:
+            self.count_lines = lines
+            self._log(f"已加载时段「{period_name}」的 {len(lines)} 条截面线")
 
     def _find_video_for_node(self, item: str) -> Path | None:
         """向上查找节点树，获取所属视频文件路径"""
@@ -1783,35 +1941,53 @@ class UAVDetectionUI:
         item = tree.identify_row(event.y)
         if not item: return
         tree.selection_set(item)
-        tags = str(tree.item(item, "tags"))
-        values = tree.item(item, "values") or []
-        parent = tree.parent(item)
 
-        # 判断是否在 outputs 树下
+        # 统一读取 tags（兼容 tkinter 版本差异：可能返回 string / tuple / list）
+        raw_tags = tree.item(item, "tags")
+        if isinstance(raw_tags, str):
+            tag_list = [raw_tags]
+        elif isinstance(raw_tags, (list, tuple)):
+            tag_list = list(raw_tags)
+        else:
+            tag_list = []
+        tag_set = set(tag_list)
+
+        # 统一读取 values（同上兼容处理）
+        raw_vals = tree.item(item, "values")
+        if isinstance(raw_vals, str):
+            vals = [raw_vals]
+        elif isinstance(raw_vals, (list, tuple)):
+            vals = list(raw_vals)
+        else:
+            vals = []
+        vals_len = len(vals)
+
         under_outputs = self._is_under_outputs(item)
+        print(f"[右键] item={item} tags={tag_list} vals_len={vals_len} under_outputs={under_outputs}")
 
-        if "direction" in tags and len(values) >= 5:
-            # L4: 方向截面
-            vp, pn, en, dn, lid = values[0], values[1], values[2], values[3], values[4]
-            self._show_direction_menu(item, Path(vp), pn, en, dn, lid, event.x_root, event.y_root)
-        elif "entry" in tags and len(values) >= 3:
-            # L3: 进口道
-            vp, pn, en = values[0], values[1], values[2]
-            self._show_entry_menu(item, Path(vp), pn, en, event.x_root, event.y_root)
-        elif "period" in tags and len(values) >= 2:
-            # L2: 统计时段
-            vp, pn = values[0], values[1]
-            self._show_period_menu(item, Path(vp), pn, event.x_root, event.y_root)
-        elif "video" in tags and not under_outputs:
-            # L1: data/视频
-            vp = Path(values[0]) if values else None
-            if vp and vp.exists():
-                self._show_data_video_menu(item, vp, event.x_root, event.y_root)
-        elif under_outputs and values:
-            # L5: outputs/文件
-            fp = Path(values[0])
-            if fp.exists():
-                self._show_output_file_menu(item, fp, event.x_root, event.y_root)
+        try:
+            if "direction" in tag_set and vals_len >= 5:
+                self._show_direction_menu(item, Path(vals[0]), vals[1], vals[2], vals[3], vals[4],
+                                          event.x_root, event.y_root)
+            elif "entry" in tag_set and vals_len >= 3:
+                print(f"[菜单→进口道] vals={vals}")
+                self._show_entry_menu(item, Path(vals[0]), vals[1], vals[2],
+                                      event.x_root, event.y_root)
+            elif "period" in tag_set and vals_len >= 2:
+                self._show_period_menu(item, Path(vals[0]), vals[1],
+                                       event.x_root, event.y_root)
+            elif "video" in tag_set and not under_outputs:
+                vp = Path(vals[0]) if vals else None
+                if vp and vp.exists():
+                    self._show_data_video_menu(item, vp, event.x_root, event.y_root)
+            elif under_outputs and vals:
+                fp = Path(vals[0])
+                if fp.exists():
+                    self._show_output_file_menu(item, fp, event.x_root, event.y_root)
+        except Exception as e:
+            import traceback
+            print(f"[右键菜单异常] tags={tag_list} vals={vals} err={e}")
+            traceback.print_exc()
 
     def _is_under_outputs(self, item: str) -> bool:
         """判断节点是否在 outputs 树下"""
@@ -1880,16 +2056,19 @@ class UAVDetectionUI:
             messagebox.showwarning("警告", "时段名称已存在"); return
         fps = self.fps if hasattr(self, 'fps') and self.fps > 0 else 30.0
         total = self.total_frames if hasattr(self, 'total_frames') and self.total_frames > 0 else 9999
+        # 使用系统当前起终点作为默认时段范围
+        sf = getattr(self, 'start_frame', 0) or 0
+        ef = getattr(self, 'end_frame', total) or total
         periods[name] = {
-            "start": 0, "end": total,
-            "start_time": "00:00:00",
-            "end_time": self._frames_to_time_str(total, fps),
+            "start": sf, "end": ef,
+            "start_time": self._frames_to_time_str(sf, fps),
+            "end_time": self._frames_to_time_str(ef, fps),
             "entries": {}
         }
         self._save_config_yaml(video_path, data)
         dialog.destroy()
         self._scan_file_browser()
-        self._log(f"已添加统计时段: {name}")
+        self._log(f"已添加统计时段: {name} (帧 {sf}-{ef})")
 
     def _rename_file_node(self, item: str, path: Path):
         new_name = simpledialog.askstring("重命名", "新文件名:", initialvalue=path.stem)
@@ -2056,10 +2235,17 @@ class UAVDetectionUI:
         if not name: return
         data = self._load_config_yaml(video_path) or {"periods": {}}
         periods = data.setdefault("periods", {})
+        fps = self.fps if self.fps > 0 else 30.0
+        total = self.total_frames if self.total_frames > 0 else 9999
+        sf = getattr(self, 'start_frame', 0) or 0
+        ef = getattr(self, 'end_frame', total) or total
         if period_name not in periods:
-            periods[period_name] = {"start": 0, "end": self.total_frames or 9999,
-                "start_time": "00:00:00", "end_time": self._frames_to_time_str(self.total_frames or 9999, 30),
-                "entries": {}}
+            periods[period_name] = {
+                "start": sf, "end": ef,
+                "start_time": self._frames_to_time_str(sf, fps),
+                "end_time": self._frames_to_time_str(ef, fps),
+                "entries": {}
+            }
         entries = periods[period_name].setdefault("entries", {})
         if name in entries:
             messagebox.showwarning("警告", "进口道名称已存在"); return
@@ -2136,6 +2322,28 @@ class UAVDetectionUI:
         except Exception as e:
             messagebox.showerror("错误", f"删除失败: {e}")
 
+    # ═══════════ 视频加载 ═══════════
+
+    def _open_video_from_browser(self, path: Path):
+        """从文件浏览器打开视频"""
+        if not path.exists():
+            self._log(f"文件不存在: {path}")
+            return
+        self._stop_playback()
+        self.video_path = path
+        self._log(f"打开视频: {path.name}")
+        self._load_video()
+
+    def _load_browser_config(self, video_path: Path):
+        """加载浏览器选中视频的截面线配置"""
+        lines = load_cs_lines_config(video_path, PROJECT_ROOT)
+        if lines:
+            self.count_lines = lines
+            self._refresh_tree()
+            self._log(f"已加载 {len(lines)} 条截面线配置")
+        else:
+            self._log("未找到该视频的截面线配置")
+
     # ═══════════ 画线与编辑模式 ═══════════
 
     def _add_direction_and_draw(self, video_path: Path, period_name: str,
@@ -2143,19 +2351,31 @@ class UAVDetectionUI:
         """添加转向方向 → 进入画线模式"""
         if not self.video_path or self.video_path.resolve() != video_path.resolve():
             self._open_video_from_browser(video_path)
-            self.root.after(300, lambda: self._enter_draw_mode(
+            self.root.after(500, lambda: self._try_enter_draw_mode(
                 video_path, period_name, entry_name, direction))
         else:
             self._enter_draw_mode(video_path, period_name, entry_name, direction)
 
+    def _try_enter_draw_mode(self, video_path, period_name, entry_name, direction, retry=0):
+        """确认视频加载完成后进入画线模式（带重试）"""
+        if not self.video_label:
+            if retry < 10:
+                self.root.after(200, lambda: self._try_enter_draw_mode(
+                    video_path, period_name, entry_name, direction, retry + 1))
+            return
+        self._enter_draw_mode(video_path, period_name, entry_name, direction)
+
     def _enter_draw_mode(self, video_path: Path, period_name: str,
                           entry_name: str, direction: str):
         """进入画线模式：单击起点→移动预览→单击终点→Enter/双击确认"""
-        # 停止播放，显示当前帧
+        if not self.video_label:
+            print("[DrawMode] video_label is None, aborting")
+            return
+        # 停止播放
         self._pause()
         self._send_command(PlayerCommand.STOP)
-        # 清理旧的绑定
-        self._cancel_draw_mode()
+        # 清理旧绑定（不刷新显示，避免触发 resize 导致画面缩放）
+        self._unbind_draw_events()
 
         self._draw_state = {
             "video_path": str(video_path), "period_name": period_name,
@@ -2180,13 +2400,20 @@ class UAVDetectionUI:
         self.root.bind("<Double-1>", self._on_draw_confirm)
         self.root.bind("<Escape>", self._on_draw_cancel)
 
-    def _cancel_draw_mode(self):
-        """取消画线/编辑模式，恢复绑定"""
-        self.video_label.unbind("<Button-1>")
-        self.video_label.unbind("<Motion>")
+    def _unbind_draw_events(self):
+        """仅解绑画线事件，不刷新显示（避免触发帧 resize）"""
+        try:
+            self.video_label.unbind("<Button-1>")
+            self.video_label.unbind("<Motion>")
+        except Exception:
+            pass
         self.root.unbind("<Return>")
         self.root.unbind("<Double-1>")
         self.root.unbind("<Escape>")
+
+    def _cancel_draw_mode(self):
+        """取消画线/编辑模式，恢复绑定 + 刷新帧显示"""
+        self._unbind_draw_events()
         if hasattr(self, 'lbl_draw_hint') and self.lbl_draw_hint:
             self.lbl_draw_hint.place_forget()
         self._draw_state = None
@@ -2214,12 +2441,19 @@ class UAVDetectionUI:
         if not ds or ds["phase"] != "draw": return
         vx, vy = self._mouse_to_video_coords(event.x, event.y)
         if vx < 0 or vy < 0: return
-        # 实时预览：在 video_label 上画临时线
+        # 实时预览：在保持显示尺寸的前提下画临时线
         frame = self._render_current_frame_copy()
         if frame is not None:
             import cv2
-            x1, y1 = self._video_to_label_coords(ds["x1"], ds["y1"])
-            x2, y2 = self._video_to_label_coords(vx, vy)
+            h, w = frame.shape[:2]
+            # 计算当前显示尺寸（同 _render_ui_frame）
+            display_w, display_h = 920, 540
+            ratio = min(display_w / w, display_h / h)
+            if ratio < 1:
+                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+            # 在缩放后的帧上画线
+            x1, y1 = int(ds["x1"] * ratio), int(ds["y1"] * ratio)
+            x2, y2 = int(vx * ratio), int(vy * ratio)
             cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = ImageTk.PhotoImage(Image.fromarray(rgb))
@@ -2821,6 +3055,8 @@ class UAVDetectionUI:
 
         self.is_detecting = True
         self._pause()
+        # 视频指针同步到起点帧（支持时段/自定义范围）
+        self._seek_absolute(self.start_frame)
 
         self.btn_start.config(state="disabled", bg=C.BTN_DISABLED, fg=C.BTN_DISABLED_TEXT)
         self.btn_stop.config(state="normal", bg=C.RED, fg=C.BG)
@@ -2860,23 +3096,34 @@ class UAVDetectionUI:
             output_video = output_dir / f"detect_{model_name}_{int(time.time())}.mp4"
 
             self.root.after(0, self._log, f"使用模型: {model_name}")
-            # 准备流量统计截面线（需在日志输出前计算，供跟踪状态判断）
+            # 准备流量统计截面线
             _count_lines = None
             if self.var_traffic_count.get():
                 _count_lines = [cl for cl in self.count_lines if cl.is_drawn]
-            _enable_tracking = bool(_count_lines) or self.var_auto_traffic.get()  # 截面线或自动流量统计都需跟踪
+            # 跟踪启用条件：用户勾选轨迹跟踪 AND (画线统计或自动流量统计需要跟踪)
+            need_tracking_for_flow = bool(_count_lines) or self.var_auto_traffic.get()
+            _enable_tracking = self.var_enable_tracking.get() and need_tracking_for_flow
+            _enable_detection = self.var_enable_detection.get()
+
+            # 判断是否有任何输出选项被选中
+            _has_output = (self.var_write_output.get() or self.var_export_traffic.get() or
+                           self.var_export_trajectory_img.get() or self.var_export_trajectory_data.get())
 
             self.root.after(0, self._log, f"设备: {device}")
             self.root.after(0, self._log,
                 f"检测范围: 帧 {self.start_frame} - {self.end_frame}")
             self.root.after(0, self._log,
+                f"目标检测: {'启用' if _enable_detection else '关闭（仅过帧）'}")
+            self.root.after(0, self._log,
                 f"SAHI切片: {'启用' if self.var_use_sahi.get() else '关闭（整帧推理）'}")
             self.root.after(0, self._log,
-                f"跟踪: {'启用' if _enable_tracking else '关闭'}")
+                f"轨迹跟踪: {'启用' if _enable_tracking else '关闭'}")
             self.root.after(0, self._log,
-                f"视频输出: {'启用' if self.var_write_output.get() else '关闭（仅统计）'}")
+                f"视频输出: {'启用' if self.var_write_output.get() else '关闭'}")
             self.root.after(0, self._log,
                 f"车道边界检测: {'启用' if self.var_enable_road_detect.get() else '关闭'}")
+            if not _has_output:
+                self.root.after(0, self._log, "⚠ 无输出选项选中，仅执行检测不生成文件")
             if _count_lines:
                 self.root.after(0, self._log, f"流量统计: 启用，共 {len(_count_lines)} 条截面线")
 
@@ -2917,6 +3164,7 @@ class UAVDetectionUI:
                 write_output=self.var_write_output.get(),
                 enable_road_detect=self.var_enable_road_detect.get(),
                 road_model_type=self.road_model_var.get(),
+                enable_detection=_enable_detection,
                 enable_auto_traffic=self.var_auto_traffic.get(),
                 show_trajectory=self.var_show_trajectory.get(),
                 stop_event=_stop_event,
@@ -3189,17 +3437,29 @@ class UAVDetectionUI:
         return None
 
     def _draw_lines_on_frame(self, frame: np.ndarray) -> np.ndarray:
-        """在帧上绘制所有已配置的截面线（使用中文字体）"""
+        """在帧上绘制所有已配置的截面线 + 实时通过车辆数（中文）"""
         annotated = frame.copy()
         font_path = str(resolve_chinese_font_path())
+        # 获取当前流量统计（检测过程中实时更新）
+        traffic_stats = getattr(self, '_traffic_stats', None)
+        by_entry = traffic_stats.get("by_entry", {}) if traffic_stats else {}
+
         for cl in self.count_lines:
             if not cl.is_drawn:
                 continue
+            # 截面线
             cv2.line(annotated, (cl.x1, cl.y1), (cl.x2, cl.y2), cl.color, 3)
             cv2.circle(annotated, (cl.x1, cl.y1), 5, (0, 255, 0), -1)
             cv2.circle(annotated, (cl.x2, cl.y2), 5, (0, 0, 255), -1)
+
+            # 实时计数
+            count = 0
+            if by_entry and cl.entry_name in by_entry:
+                counts = by_entry[cl.entry_name].get(cl.direction, {})
+                count = sum(counts.values()) if isinstance(counts, dict) else 0
+
             mx, my = (cl.x1 + cl.x2) // 2, (cl.y1 + cl.y2) // 2
-            label = f"{cl.entry_name}→{cl.direction}"
+            label = f"{cl.entry_name}→{cl.direction}: {count}辆"
             tw, th = get_chinese_text_size(label, font_size=14, font_path=font_path)
             tx, ty = mx - tw // 2, my - 8
             # 半透明背景
@@ -3668,19 +3928,9 @@ class UAVDetectionUI:
         self._rename_tree_node(node)
 
     def _on_tree_right_click(self, event):
-        """树节点右键菜单（空白处/标题行也可添加进口道/转向）"""
-        item = self.tree_traffic.identify_row(event.y)
-        if item:
-            # 点击的是树节点行
-            self.tree_traffic.selection_set(item)
-            parent = self.tree_traffic.parent(item)
-            if parent == "":
-                self._show_entry_menu(item, event.x_root, event.y_root)
-            else:
-                self._show_direction_menu(item, parent, event.x_root, event.y_root)
-        else:
-            # 点击的是空白处或标题行，显示添加入口菜单
-            self._show_empty_area_menu(event.x_root, event.y_root)
+        """树节点右键菜单（已迁移至文件浏览器右键菜单系统）"""
+        # 此 handler 不再使用，进口道/方向管理请通过左侧文件浏览器右键操作
+        pass
 
     def _on_tree_double_click(self, event):
         """树节点双击 - 重命名"""
@@ -3688,42 +3938,8 @@ class UAVDetectionUI:
         if item:
             self._rename_tree_node(item)
 
-    def _show_entry_menu(self, item, x, y):
-        """进口道节点右键菜单"""
-        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT,
-                       font=("Microsoft YaHei", 9))
-        menu.add_command(label="重命名", command=lambda: self._rename_tree_node(item))
-        menu.add_separator()
-        for direction in ["直行", "左转", "右转", "掉头"]:
-            menu.add_command(label=f"添加{direction}",
-                             command=lambda d=direction: self._add_direction(item, d))
-        menu.add_command(label="添加自定义方向...",
-                         command=lambda: self._add_custom_direction(item))
-        menu.add_separator()
-        menu.add_command(label="删除进口道", command=lambda: self._delete_tree_item(item))
-        menu.post(x, y)
-
-    def _show_direction_menu(self, item, parent_item, x, y):
-        """方向节点右键菜单"""
-        menu = tk.Menu(self.root, tearoff=0, bg=C.CARD, fg=C.TEXT,
-                       font=("Microsoft YaHei", 9))
-        menu.add_command(label="重命名方向", command=lambda: self._rename_tree_node(item))
-        menu.add_separator()
-        menu.add_command(label="修改画线", command=lambda: self._modify_line(item, parent_item))
-        menu.add_command(label="删除画线", command=lambda: self._delete_line(item, parent_item))
-        menu.add_separator()
-        # 移动到其他进口道
-        move_menu = tk.Menu(menu, tearoff=0, bg=C.CARD, fg=C.TEXT,
-                            font=("Microsoft YaHei", 9))
-        for child in self.tree_traffic.get_children():
-            if child != parent_item:
-                entry_name = self.tree_traffic.item(child, "text")
-                move_menu.add_command(label=entry_name,
-                                      command=lambda c=child, en=entry_name: self._move_direction(item, parent_item, c, en))
-        menu.add_cascade(label="移动到", menu=move_menu)
-        menu.add_separator()
-        menu.add_command(label="删除此转向", command=lambda: self._delete_tree_item(item))
-        menu.post(x, y)
+    # 注意: _show_entry_menu 和 _show_direction_menu 已迁移至文件浏览器右键菜单系统
+    # 旧版定义位于上方 "L3: 进口道右键菜单" 和 "L4: 方向截面右键菜单"
 
     def _show_empty_area_menu(self, x, y):
         """树形控件空白处/标题行右键菜单（添加进口道或转向）"""
